@@ -1,0 +1,45 @@
+services:
+  db:
+    image: ankane/pgvector:latest
+    container_name: dms-db
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-documentale}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    container_name: dms-backend
+    volumes:
+      - ./backend:/app
+      - ./docker-volumes/documents:/app/storage/documents
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-documentale}
+      SECRET_KEY: ${SECRET_KEY:-ChangeMeVerySecret}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_ENABLED: ${GEMINI_ENABLED:-true}
+    depends_on:
+      - db
+
+  frontend:
+    build: ./frontend
+    container_name: dms-frontend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  documents:
