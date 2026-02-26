@@ -73,3 +73,8 @@ class DocumentContent(Base):
     # embedding = Column(Vector(1536)) # Will require pgvector installation in migration
 
     document = relationship("Document", back_populates="content")
+
+    # GIN index for fast full-text search on the tsvector column
+    __table_args__ = (
+        Index('idx_search_vector_gin', 'search_vector', postgresql_using='gin'),
+    )

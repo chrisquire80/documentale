@@ -1,6 +1,9 @@
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from .core.config import settings
+from .core.cache import startup_redis, shutdown_redis
 from .db import engine, Base
 
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -23,31 +26,68 @@ from .services import watcher
 app.include_router(auth.router)
 app.include_router(documents.router)
 
+
 @app.on_event("startup")
 async def startup():
     # In a real app, use Alembic. For this prototype, we create tables on startup.
-    import asyncio
     max_retries = 5
     for attempt in range(max_retries):
         try:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
-            print("Successfully connected to the database and created tables.")
+            print("Database: tabelle create/verificate con successo.")
             break
         except Exception as e:
             if attempt < max_retries - 1:
-                print(f"Database connection failed (attempt {attempt + 1}/{max_retries}). Retrying in 2 seconds... Error: {e}")
+                print(
+                    f"Database: tentativo {attempt + 1}/{max_retries} fallito. "
+                    f"Nuovo tentativo tra 2s... Errore: {e}"
+                )
                 await asyncio.sleep(2)
             else:
-                print(f"Failed to connect to the database after {max_retries} attempts.")
+                print(f"Database: connessione fallita dopo {max_retries} tentativi.")
                 raise e
-    
+
+    # Installa trigger PostgreSQL che popola automaticamente search_vector
+    # da fulltext_content ad ogni INSERT/UPDATE su doc_content.
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            CREATE OR REPLACE FUNCTION update_search_vector()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                NEW.search_vector :=
+                    to_tsvector('italian', coalesce(NEW.fulltext_content, ''));
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+        """))
+        await conn.execute(text("""
+            DROP TRIGGER IF EXISTS trg_update_search_vector ON doc_content;
+        """))
+        await conn.execute(text("""
+            CREATE TRIGGER trg_update_search_vector
+                BEFORE INSERT OR UPDATE OF fulltext_content ON doc_content
+                FOR EACH ROW EXECUTE FUNCTION update_search_vector();
+        """))
+        # GIN index per query FTS veloci (idempotente)
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_search_vector_gin
+                ON doc_content USING gin(search_vector);
+        """))
+    print("FTS: trigger e indice GIN installati su doc_content.")
+
+    # Avvia cache Redis
+    await startup_redis()
+
     # Avvia servizio Watchdog in background
     watcher.start_watcher()
+
 
 @app.on_event("shutdown")
 async def shutdown():
     watcher.stop_watcher()
+    await shutdown_redis()
+
 
 @app.get("/")
 async def root():
