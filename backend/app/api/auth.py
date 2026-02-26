@@ -1,24 +1,36 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from jose import jwt, JWTError
+
 from ..db import get_db
 from ..models.user import User
 from ..core.security import verify_password, create_access_token
 from ..core.config import settings
-from ..schemas.doc_schemas import Token, UserLogin
+from ..core.cache import get_redis
+from ..core.rate_limit import limiter
+from ..schemas.doc_schemas import Token, UserLogin, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
-async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> User:
+_BLACKLIST_PREFIX = "blacklist:"
+
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
+) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str = payload.get("sub")
@@ -26,23 +38,66 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-        
+
+    # Controlla blacklist token (logout server-side)
+    if redis:
+        try:
+            if await redis.get(f"{_BLACKLIST_PREFIX}{token}"):
+                raise credentials_exception
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # Redis non disponibile: procedi senza blacklist
+
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
     if user is None:
         raise credentials_exception
     return user
 
+
 @router.post("/login", response_model=Token)
-async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def login(request: Request, login_data: UserLogin, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == login_data.email))
     user = result.scalar_one_or_none()
-    
+
     if not user or not verify_password(login_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
+            detail="Email o password non corretti.",
         )
-    
+
     access_token = create_access_token(subject=user.email)
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/logout")
+@limiter.limit("30/minute")
+async def logout(
+    request: Request,
+    token: str = Depends(oauth2_scheme),
+    redis=Depends(get_redis),
+):
+    """
+    Invalida il token JWT inserendolo nella blacklist Redis con TTL pari al
+    tempo residuo. Anche senza Redis il client rimuove il token localmente.
+    """
+    if redis:
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            exp = payload.get("exp")
+            if exp:
+                remaining_ttl = int(exp - datetime.now(tz=timezone.utc).timestamp())
+                if remaining_ttl > 0:
+                    await redis.setex(f"{_BLACKLIST_PREFIX}{token}", remaining_ttl, "1")
+        except Exception:
+            pass  # Token già scaduto o Redis non disponibile
+
+    return {"message": "Logout effettuato con successo."}
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_me(current_user: User = Depends(get_current_user)):
+    """Restituisce le informazioni dell'utente autenticato (incluso il ruolo)."""
+    return current_user

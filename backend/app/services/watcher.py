@@ -12,10 +12,20 @@ import aiofiles
 
 from ..db import SessionLocal
 from ..models.user import User
-from ..models.document import Document, DocumentVersion, DocumentMetadata
+from ..models.document import Document, DocumentVersion, DocumentMetadata, DocumentContent
 from ..models.audit import AuditLog
 from ..core.storage import LocalStorage, settings
+from ..services.ocr import extract_text as ocr_extract_text
 from sqlalchemy import select
+
+# Mappa estensione → MIME type per l'OCR
+_EXT_MIME = {
+    '.pdf':  'application/pdf',
+    '.txt':  'text/plain',
+    '.jpg':  'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png':  'image/png',
+}
 
 WATCH_DIR = "/app/auto_ingest"
 ALLOWED_EXTENSIONS = {'.pdf', '.doc', '.docx', '.txt', '.jpg', '.jpeg', '.png'}
@@ -91,11 +101,23 @@ class AutoIngestHandler(FileSystemEventHandler):
                     metadata_json={"tags": ["auto-ingest"]}
                 )
                 db.add(meta)
-                
-                # 5. Audit log
+
+                # 5. Estrai testo via OCR e crea DocumentContent per FTS
+                ext = os.path.splitext(filename)[1].lower()
+                content_type = _EXT_MIME.get(ext, 'application/octet-stream')
+                abs_path = await self.storage.get_file_path(file_rel_path)
+                ocr_text = await ocr_extract_text(abs_path, content_type)
+                corpus = f"{filename} {ocr_text}".strip() if ocr_text else filename
+                doc_content = DocumentContent(
+                    document_id=doc.id,
+                    fulltext_content=corpus,
+                )
+                db.add(doc_content)
+
+                # 6. Audit log
                 audit = AuditLog(user_id=system_user.id, action="AUTO_UPLOAD", target_id=doc.id, details="Ingested by Documentale Watchdog")
                 db.add(audit)
-                
+
                 await db.commit()
                 print(f"Watchdog: Successfully ingested {filename}. Marking as processed...")
                 
