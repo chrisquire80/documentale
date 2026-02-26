@@ -9,16 +9,10 @@ import Pagination from '../components/Pagination';
 import UploadModal from '../components/UploadModal';
 import BulkUploadModal from '../components/BulkUploadModal';
 import CacheStatsModal from '../components/CacheStatsModal';
+import { Document, PaginatedDocuments } from '../types/document';
 
 const ITEMS_PER_PAGE = 20;
 const SKELETON_COUNT = 6;
-
-interface PaginatedDocuments {
-    items: any[];
-    total: number;
-    limit: number;
-    offset: number;
-}
 
 const DashboardPage: React.FC = () => {
     const [inputValue, setInputValue] = useState('');
@@ -133,7 +127,7 @@ const DashboardPage: React.FC = () => {
                     <>
                         {/* key forces CSS page-enter animation on page/query change */}
                         <div className="doc-grid" key={`${currentPage}-${debouncedQuery}`}>
-                            {documents.map((doc: any) => (
+                            {documents.map((doc: Document) => (
                                 <DocumentCard key={doc.id} doc={doc} />
                             ))}
                             {documents.length === 0 && (

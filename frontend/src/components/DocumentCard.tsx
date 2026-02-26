@@ -1,9 +1,10 @@
 import React, { useState, useCallback } from 'react';
 import { FileDown, Calendar, User } from 'lucide-react';
+import { Document } from '../types/document';
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:8000';
 
-const DocumentCard: React.FC<{ doc: any }> = ({ doc }) => {
+const DocumentCard: React.FC<{ doc: Document }> = ({ doc }) => {
     // null = idle | 0-100 = percentage during download
     const [progress, setProgress] = useState<number | null>(null);
     const [downloadError, setDownloadError] = useState(false);
