@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../services/api';
 import { useAuth } from '../store/AuthContext';
@@ -8,18 +8,32 @@ import UploadModal from '../components/UploadModal';
 import BulkUploadModal from '../components/BulkUploadModal';
 
 const DashboardPage: React.FC = () => {
-    const [searchQuery, setSearchQuery] = useState('');
+    const [inputValue, setInputValue] = useState('');
+    const [debouncedQuery, setDebouncedQuery] = useState('');
     const [isUploadOpen, setIsUploadOpen] = useState(false);
     const [isBulkOpen, setIsBulkOpen] = useState(false);
     const { logout } = useAuth();
 
+    // Debounce search input (500ms delay)
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedQuery(inputValue);
+        }, 500);
+
+        return () => clearTimeout(timer);
+    }, [inputValue]);
+
     const { data: documents, isLoading, refetch } = useQuery({
-        queryKey: ['documents', searchQuery],
+        queryKey: ['documents', debouncedQuery],
         queryFn: async () => {
-            const response = await api.get(`/documents/search?query=${searchQuery}`);
+            const response = await api.get(`/documents/search?query=${debouncedQuery}`);
             return response.data;
         }
     });
+
+    const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        setInputValue(e.target.value);
+    }, []);
 
     return (
         <div>
@@ -50,8 +64,8 @@ const DashboardPage: React.FC = () => {
                         className="input"
                         style={{ paddingLeft: '3rem', marginBottom: 0 }}
                         placeholder="Cerca documenti per titolo, tag o contenuto..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
+                        value={inputValue}
+                        onChange={handleSearchChange}
                     />
                 </div>
 

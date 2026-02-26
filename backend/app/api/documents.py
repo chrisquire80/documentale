@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, distinct
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from uuid import UUID
@@ -74,42 +74,52 @@ async def upload_document(
     db.add(audit)
     
     await db.commit()
-    
-    # Reload the document with eager loading for the requested relationships needed by Pydantic
-    stmt = select(Document).options(selectinload(Document.metadata_entries)).where(Document.id == doc.id)
-    result = await db.execute(stmt)
-    full_doc = result.scalar_one()
-    
-    return full_doc
+
+    # Refresh the document with eager loading for relationships
+    await db.refresh(doc, ['metadata_entries', 'owner'])
+
+    return doc
 
 @router.get("/search", response_model=List[DocumentResponse])
 async def search_documents(
     query: Optional[str] = None,
     tag: Optional[str] = None,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    stmt = select(Document).options(selectinload(Document.metadata_entries)).outerjoin(DocumentMetadata)
-    
+    stmt = select(Document).options(
+        selectinload(Document.metadata_entries),
+        selectinload(Document.owner)
+    )
+
+    # Only join metadata table if filtering by tag
+    if tag:
+        stmt = stmt.outerjoin(DocumentMetadata)
+
     filters = []
-    
+
     # RBAC logic
     if current_user.role != UserRole.ADMIN:
         filters.append(or_(
             Document.is_restricted == False,
             Document.owner_id == current_user.id
         ))
-    
+
     if query:
         # Simplified query for now, will implement full PG FTS later
         filters.append(Document.title.ilike(f"%{query}%"))
-        
+
     if tag:
         filters.append(DocumentMetadata.metadata_json['tags'].contains([tag]))
-        
+
     if filters:
         stmt = stmt.where(*filters)
-        
+
+    # Apply pagination
+    stmt = stmt.offset(offset).limit(limit)
+
     result = await db.execute(stmt)
     return result.scalars().unique().all()
 
@@ -121,7 +131,9 @@ async def download_document(
     db: AsyncSession = Depends(get_db),
     storage: StorageLayer = Depends(get_storage)
 ):
-    stmt = select(Document).where(Document.id == doc_id)
+    stmt = select(Document).options(
+        selectinload(Document.owner)
+    ).where(Document.id == doc_id)
     result = await db.execute(stmt)
     doc = result.scalar_one_or_none()
     
