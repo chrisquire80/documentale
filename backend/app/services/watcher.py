@@ -47,6 +47,11 @@ class AutoIngestHandler(FileSystemEventHandler):
         if not os.path.exists(file_path):
             return
 
+        marker_file = f"{file_path}.processed"
+        if os.path.exists(marker_file):
+            print(f"Watchdog: {file_path} already processed. Skipping.")
+            return
+
         filename = os.path.basename(file_path)
         print(f"Watchdog: Starting ingestion for {filename}")
 
@@ -92,10 +97,12 @@ class AutoIngestHandler(FileSystemEventHandler):
                 db.add(audit)
                 
                 await db.commit()
-                print(f"Watchdog: Successfully ingested {filename}. Deleting original file...")
+                print(f"Watchdog: Successfully ingested {filename}. Marking as processed...")
                 
-                # Remove the original file so it doesn't get processed again
-                os.remove(file_path)
+                # Create a marker file so it doesn't get processed again
+                marker_file = f"{file_path}.processed"
+                with open(marker_file, 'w') as mf:
+                    mf.write(f"Ingested as Document ID: {doc.id}")
                 
             except Exception as e:
                 await db.rollback()
