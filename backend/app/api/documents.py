@@ -27,6 +27,20 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
     storage: StorageLayer = Depends(get_storage)
 ):
+    # Validate file type
+    allowed_types = [
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "text/plain",
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp"
+    ]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="File type not allowed")
+
     # 1. Save file to storage
     file_rel_path = await storage.save_file(file.file, file.filename)
     
@@ -60,8 +74,13 @@ async def upload_document(
     db.add(audit)
     
     await db.commit()
-    await db.refresh(doc)
-    return doc
+    
+    # Reload the document with eager loading for the requested relationships needed by Pydantic
+    stmt = select(Document).options(selectinload(Document.metadata_entries)).where(Document.id == doc.id)
+    result = await db.execute(stmt)
+    full_doc = result.scalar_one()
+    
+    return full_doc
 
 @router.get("/search", response_model=List[DocumentResponse])
 async def search_documents(

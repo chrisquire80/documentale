@@ -7,12 +7,14 @@ const UploadModal: React.FC<{ onClose: () => void, onSuccess: () => void }> = ({
     const [title, setTitle] = useState('');
     const [isRestricted, setIsRestricted] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!file) return;
 
         setIsUploading(true);
+        setError(null);
         const formData = new FormData();
         formData.append('file', file);
         formData.append('title', title || file.name);
@@ -24,8 +26,9 @@ const UploadModal: React.FC<{ onClose: () => void, onSuccess: () => void }> = ({
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
             onSuccess();
-        } catch (err) {
+        } catch (err: any) {
             console.error('Upload failed', err);
+            setError(err.response?.data?.detail || 'Errore durante il caricamento del file. Verifica il formato e riprova.');
         } finally {
             setIsUploading(false);
         }
@@ -45,12 +48,16 @@ const UploadModal: React.FC<{ onClose: () => void, onSuccess: () => void }> = ({
                     </div>
 
                     <div style={{ marginBottom: '1rem' }}>
-                        <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem' }}>File</label>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem' }}>File (PDF, Doc, Txt, Immagini)</label>
                         <input
                             type="file"
                             className="input"
+                            accept=".pdf,.doc,.docx,.txt,image/*"
                             style={{ border: '1px dashed var(--glass)', padding: '2rem', height: 'auto' }}
-                            onChange={e => setFile(e.target.files?.[0] || null)}
+                            onChange={e => {
+                                setFile(e.target.files?.[0] || null);
+                                setError(null);
+                            }}
                             required
                         />
                     </div>
@@ -59,6 +66,12 @@ const UploadModal: React.FC<{ onClose: () => void, onSuccess: () => void }> = ({
                         <input type="checkbox" checked={isRestricted} onChange={e => setIsRestricted(e.target.checked)} id="restricted" />
                         <label htmlFor="restricted" style={{ fontSize: '0.875rem' }}>Documento Riservato</label>
                     </div>
+
+                    {error && (
+                        <div style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: '0.375rem', fontSize: '0.875rem' }}>
+                            {error}
+                        </div>
+                    )}
 
                     <button className="btn" type="submit" disabled={isUploading || !file}>
                         {isUploading ? 'Caricamento...' : 'Carica'}

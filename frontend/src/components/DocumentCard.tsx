@@ -29,7 +29,7 @@ const DocumentCard: React.FC<{ doc: any }> = ({ doc }) => {
                 </button>
             </div>
 
-            <div style={{ spaceY: '0.5rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
                     <Calendar size={14} />
                     {new Date(doc.created_at).toLocaleDateString()}

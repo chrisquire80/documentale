@@ -5,10 +5,12 @@ import { useAuth } from '../store/AuthContext';
 import { Search, LogOut, Upload as UploadIcon, FileText } from 'lucide-react';
 import DocumentCard from '../components/DocumentCard';
 import UploadModal from '../components/UploadModal';
+import BulkUploadModal from '../components/BulkUploadModal';
 
 const DashboardPage: React.FC = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const [isUploadOpen, setIsUploadOpen] = useState(false);
+    const [isBulkOpen, setIsBulkOpen] = useState(false);
     const { logout } = useAuth();
 
     const { data: documents, isLoading, refetch } = useQuery({
@@ -27,9 +29,13 @@ const DashboardPage: React.FC = () => {
                     <h1 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Documentale</h1>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem' }}>
-                    <button className="btn" style={{ width: 'auto' }} onClick={() => setIsUploadOpen(true)}>
+                    <button className="btn" style={{ width: 'auto' }} onClick={() => setIsBulkOpen(true)}>
                         <UploadIcon size={18} style={{ marginRight: '0.5rem' }} />
-                        Carica Documento
+                        Carica Intera Cartella
+                    </button>
+                    <button className="btn" style={{ width: 'auto', background: 'transparent', border: '1px solid var(--accent)', color: 'var(--accent)' }} onClick={() => setIsUploadOpen(true)}>
+                        <UploadIcon size={18} style={{ marginRight: '0.5rem' }} />
+                        Carica File
                     </button>
                     <button className="btn" style={{ width: 'auto', background: 'transparent', border: '1px solid var(--glass)' }} onClick={logout}>
                         <LogOut size={18} />
@@ -70,6 +76,16 @@ const DashboardPage: React.FC = () => {
                     onClose={() => setIsUploadOpen(false)}
                     onSuccess={() => {
                         setIsUploadOpen(false);
+                        refetch();
+                    }}
+                />
+            )}
+
+            {isBulkOpen && (
+                <BulkUploadModal
+                    onClose={() => setIsBulkOpen(false)}
+                    onSuccess={() => {
+                        setIsBulkOpen(false);
                         refetch();
                     }}
                 />

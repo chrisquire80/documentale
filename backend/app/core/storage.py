@@ -27,13 +27,16 @@ class LocalStorage(StorageLayer):
             os.makedirs(self.base_path, exist_ok=True)
 
     async def save_file(self, file: BinaryIO, filename: str) -> str:
+        # Prevent path traversal attacks
+        safe_filename = os.path.basename(filename)
+        
         # Create subfolder based on date or category if needed
         # For simplicity, just use base path
-        file_path = os.path.join(self.base_path, filename)
+        file_path = os.path.join(self.base_path, safe_filename)
         
         # Ensure unique filename if exists
         counter = 1
-        name, ext = os.path.splitext(filename)
+        name, ext = os.path.splitext(safe_filename)
         while os.path.exists(file_path):
             file_path = os.path.join(self.base_path, f"{name}_{counter}{ext}")
             counter += 1

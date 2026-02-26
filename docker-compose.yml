@@ -17,6 +17,7 @@ services:
     volumes:
       - ./backend:/app
       - ./docker-volumes/documents:/app/storage/documents
+      - ./docker-volumes/auto_ingest:/app/auto_ingest
     ports:
       - "8000:8000"
     environment:
