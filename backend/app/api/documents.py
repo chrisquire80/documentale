@@ -1,3 +1,4 @@
+import asyncio
 import json
 import hashlib
 import logging
@@ -282,7 +283,7 @@ async def download_document(
         raise HTTPException(status_code=404, detail="Version not found")
 
     file_path = await storage.get_file_path(ver.file_path)
-    file_size = os.path.getsize(file_path)
+    file_size = await asyncio.to_thread(os.path.getsize, file_path)
 
     _, stored_ext = os.path.splitext(ver.file_path)
     download_filename = f"{doc.title}{stored_ext}" if stored_ext else doc.title
