@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useContext } from 'react';
-import { FileDown, Calendar, User, Eye, Pencil } from 'lucide-react';
+import { FileDown, Calendar, User, Eye, Pencil, Share2 } from 'lucide-react';
 import DocumentPreviewModal from './DocumentPreviewModal';
 import EditMetadataModal from './EditMetadataModal';
+import ShareModal from './ShareModal';
 import { useAuth } from '../store/AuthContext';
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:8000';
@@ -18,6 +19,7 @@ const DocumentCard: React.FC<{
     const [downloadError, setDownloadError] = useState(false);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [editOpen, setEditOpen] = useState(false);
+    const [shareOpen, setShareOpen] = useState(false);
 
     const canEdit = currentUser?.role === 'ADMIN' || currentUser?.id === doc.owner_id;
 
@@ -98,6 +100,21 @@ const DocumentCard: React.FC<{
                         }}
                     >
                         <Eye size={20} />
+                    </button>
+                    <button
+                        onClick={() => setShareOpen(true)}
+                        title="Condividi Link"
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: 'var(--accent)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: 0
+                        }}
+                    >
+                        <Share2 size={18} />
                     </button>
                     {canEdit && (
                         <button
@@ -220,6 +237,14 @@ const DocumentCard: React.FC<{
                     onSaveSuccess={() => {
                         if (onUpdate) onUpdate();
                     }}
+                />
+            )}
+
+            {shareOpen && (
+                <ShareModal
+                    docId={doc.id}
+                    fileName={doc.title}
+                    onClose={() => setShareOpen(false)}
                 />
             )}
         </div>
