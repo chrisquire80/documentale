@@ -1,24 +1,27 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { FileDown, Calendar, User } from 'lucide-react';
 import api from '../services/api';
 
 const DocumentCard: React.FC<{ doc: any }> = ({ doc }) => {
-    const handleDownload = async () => {
+    const handleDownload = useCallback(async () => {
         try {
             const response = await api.get(`/documents/${doc.id}/download`, {
                 responseType: 'blob'
             });
-            const url = window.URL.createObjectURL(new Blob([response.data]));
+            // Use response.data directly (already a blob), don't wrap it again
+            const url = URL.createObjectURL(response.data);
             const link = document.createElement('a');
             link.href = url;
             link.setAttribute('download', doc.title);
             document.body.appendChild(link);
             link.click();
             link.remove();
+            // Clean up the object URL to free memory
+            URL.revokeObjectURL(url);
         } catch (err) {
             console.error('Download failed', err);
         }
-    };
+    }, [doc.id, doc.title]);
 
     return (
         <div className="doc-card">
@@ -51,4 +54,4 @@ const DocumentCard: React.FC<{ doc: any }> = ({ doc }) => {
     );
 };
 
-export default DocumentCard;
+export default React.memo(DocumentCard);
