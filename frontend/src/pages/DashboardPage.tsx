@@ -4,12 +4,24 @@ import api from '../services/api';
 import { useAuth } from '../store/AuthContext';
 import { Search, LogOut, Upload as UploadIcon, FileText } from 'lucide-react';
 import DocumentCard from '../components/DocumentCard';
+import SkeletonCard from '../components/SkeletonCard';
 import UploadModal from '../components/UploadModal';
 import BulkUploadModal from '../components/BulkUploadModal';
+
+const ITEMS_PER_PAGE = 20;
+const SKELETON_COUNT = 6;
+
+interface PaginatedDocuments {
+    items: any[];
+    total: number;
+    limit: number;
+    offset: number;
+}
 
 const DashboardPage: React.FC = () => {
     const [inputValue, setInputValue] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
+    const [currentPage, setCurrentPage] = useState(1);
     const [isUploadOpen, setIsUploadOpen] = useState(false);
     const [isBulkOpen, setIsBulkOpen] = useState(false);
     const { logout } = useAuth();
@@ -19,21 +31,46 @@ const DashboardPage: React.FC = () => {
         const timer = setTimeout(() => {
             setDebouncedQuery(inputValue);
         }, 500);
-
         return () => clearTimeout(timer);
     }, [inputValue]);
 
-    const { data: documents, isLoading, refetch } = useQuery({
-        queryKey: ['documents', debouncedQuery],
+    // Reset to page 1 whenever the search term changes
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [debouncedQuery]);
+
+    const offset = (currentPage - 1) * ITEMS_PER_PAGE;
+
+    const { data, isLoading, refetch } = useQuery<PaginatedDocuments>({
+        queryKey: ['documents', debouncedQuery, currentPage],
         queryFn: async () => {
-            const response = await api.get(`/documents/search?query=${debouncedQuery}`);
+            const params = new URLSearchParams({
+                query: debouncedQuery,
+                limit: String(ITEMS_PER_PAGE),
+                offset: String(offset),
+            });
+            const response = await api.get(`/documents/search?${params}`);
             return response.data;
-        }
+        },
     });
+
+    const documents = data?.items ?? [];
+    const total = data?.total ?? 0;
+    const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
 
     const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         setInputValue(e.target.value);
     }, []);
+
+    const handleUploadSuccess = useCallback(() => {
+        setIsUploadOpen(false);
+        refetch();
+    }, [refetch]);
+
+    const handleBulkSuccess = useCallback(() => {
+        setIsBulkOpen(false);
+        refetch();
+    }, [refetch]);
 
     return (
         <div>
@@ -47,11 +84,19 @@ const DashboardPage: React.FC = () => {
                         <UploadIcon size={18} style={{ marginRight: '0.5rem' }} />
                         Carica Intera Cartella
                     </button>
-                    <button className="btn" style={{ width: 'auto', background: 'transparent', border: '1px solid var(--accent)', color: 'var(--accent)' }} onClick={() => setIsUploadOpen(true)}>
+                    <button
+                        className="btn"
+                        style={{ width: 'auto', background: 'transparent', border: '1px solid var(--accent)', color: 'var(--accent)' }}
+                        onClick={() => setIsUploadOpen(true)}
+                    >
                         <UploadIcon size={18} style={{ marginRight: '0.5rem' }} />
                         Carica File
                     </button>
-                    <button className="btn" style={{ width: 'auto', background: 'transparent', border: '1px solid var(--glass)' }} onClick={logout}>
+                    <button
+                        className="btn"
+                        style={{ width: 'auto', background: 'transparent', border: '1px solid var(--glass)' }}
+                        onClick={logout}
+                    >
                         <LogOut size={18} />
                     </button>
                 </div>
@@ -70,38 +115,64 @@ const DashboardPage: React.FC = () => {
                 </div>
 
                 {isLoading ? (
-                    <div>Caricamento...</div>
-                ) : (
                     <div className="doc-grid">
-                        {documents?.map((doc: any) => (
-                            <DocumentCard key={doc.id} doc={doc} />
+                        {Array.from({ length: SKELETON_COUNT }).map((_, i) => (
+                            <SkeletonCard key={i} />
                         ))}
-                        {documents?.length === 0 && (
-                            <div style={{ textAlign: 'center', gridColumn: '1/-1', color: 'var(--text-muted)', marginTop: '4rem' }}>
-                                Nessun documento trovato.
+                    </div>
+                ) : (
+                    <>
+                        <div className="doc-grid">
+                            {documents.map((doc: any) => (
+                                <DocumentCard key={doc.id} doc={doc} />
+                            ))}
+                            {documents.length === 0 && (
+                                <div style={{ textAlign: 'center', gridColumn: '1/-1', color: 'var(--text-muted)', marginTop: '4rem' }}>
+                                    Nessun documento trovato.
+                                </div>
+                            )}
+                        </div>
+
+                        {total > 0 && (
+                            <div className="pagination">
+                                <button
+                                    className="pagination-btn"
+                                    onClick={() => setCurrentPage(p => p - 1)}
+                                    disabled={currentPage === 1}
+                                >
+                                    ← Precedente
+                                </button>
+                                <span className="pagination-info">
+                                    Pagina {currentPage} di {totalPages}
+                                    <br />
+                                    <span style={{ fontSize: '0.78rem' }}>
+                                        {total} document{total !== 1 ? 'i' : 'o'}
+                                    </span>
+                                </span>
+                                <button
+                                    className="pagination-btn"
+                                    onClick={() => setCurrentPage(p => p + 1)}
+                                    disabled={currentPage >= totalPages}
+                                >
+                                    Successiva →
+                                </button>
                             </div>
                         )}
-                    </div>
+                    </>
                 )}
             </main>
 
             {isUploadOpen && (
                 <UploadModal
                     onClose={() => setIsUploadOpen(false)}
-                    onSuccess={() => {
-                        setIsUploadOpen(false);
-                        refetch();
-                    }}
+                    onSuccess={handleUploadSuccess}
                 />
             )}
 
             {isBulkOpen && (
                 <BulkUploadModal
                     onClose={() => setIsBulkOpen(false)}
-                    onSuccess={() => {
-                        setIsBulkOpen(false);
-                        refetch();
-                    }}
+                    onSuccess={handleBulkSuccess}
                 />
             )}
         </div>

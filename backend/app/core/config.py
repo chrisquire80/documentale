@@ -13,7 +13,8 @@ class Settings(BaseSettings):
     GEMINI_ENABLED: bool = True
 
     STORAGE_PATH: str = "/app/storage/documents"
-    
+    REDIS_URL: str = "redis://redis:6379/0"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
