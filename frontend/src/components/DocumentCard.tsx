@@ -1,8 +1,9 @@
-import React, { useState, useCallback, useContext } from 'react';
-import { FileDown, Calendar, User, Eye, Pencil, Share2 } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare } from 'lucide-react';
 import DocumentPreviewModal from './DocumentPreviewModal';
 import EditMetadataModal from './EditMetadataModal';
 import ShareModal from './ShareModal';
+import CommentsPanel from './CommentsPanel';
 import { useAuth } from '../store/AuthContext';
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:8000';
@@ -20,6 +21,7 @@ const DocumentCard: React.FC<{
     const [previewOpen, setPreviewOpen] = useState(false);
     const [editOpen, setEditOpen] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
+    const [commentsOpen, setCommentsOpen] = useState(false);
 
     const canEdit = currentUser?.role === 'ADMIN' || currentUser?.id === doc.owner_id;
 
@@ -102,6 +104,21 @@ const DocumentCard: React.FC<{
                         <Eye size={20} />
                     </button>
                     <button
+                        onClick={() => setCommentsOpen(true)}
+                        title="Commenti"
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: 'var(--text-light)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: 0
+                        }}
+                    >
+                        <MessageSquare size={18} />
+                    </button>
+                    <button
                         onClick={() => setShareOpen(true)}
                         title="Condividi Link"
                         style={{
@@ -158,7 +175,7 @@ const DocumentCard: React.FC<{
                     {new Date(doc.created_at).toLocaleDateString('it-IT')}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-                    <User size={14} />
+                    <UserIcon size={14} />
                     {String(doc.owner_id).slice(0, 8)}…
                 </div>
             </div>
@@ -245,6 +262,14 @@ const DocumentCard: React.FC<{
                     docId={doc.id}
                     fileName={doc.title}
                     onClose={() => setShareOpen(false)}
+                />
+            )}
+
+            {commentsOpen && (
+                <CommentsPanel
+                    docId={doc.id}
+                    docTitle={doc.title}
+                    onClose={() => setCommentsOpen(false)}
                 />
             )}
         </div>

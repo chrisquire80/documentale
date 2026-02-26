@@ -30,14 +30,16 @@ app.add_middleware(
     expose_headers=["Content-Length", "Content-Disposition"],
 )
 
-from .api import auth, documents, admin, shares
+from .api import auth, documents, admin, shares, comments
 from .services import watcher
 from .models.share import DocumentShare
+from .models.comment import DocumentComment
 
 app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(admin.router)
 app.include_router(shares.router)
+app.include_router(comments.router)
 
 
 @app.on_event("startup")
