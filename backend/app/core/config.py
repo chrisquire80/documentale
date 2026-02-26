@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     STORAGE_PATH: str = "/app/storage/documents"
     REDIS_URL: str = "redis://redis:6379/0"
 
+    AUTO_USER_EMAIL: str = "admin@example.com"
+    WATCH_DIR: str = "/app/auto_ingest"
+    ALLOWED_EXTENSIONS: set[str] = {'.pdf', '.doc', '.docx', '.txt', '.jpg', '.jpeg', '.png'}
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
