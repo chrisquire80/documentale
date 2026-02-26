@@ -2,11 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../services/api';
 import { useAuth } from '../store/AuthContext';
-import { Search, LogOut, Upload as UploadIcon, FileText } from 'lucide-react';
+import { Search, LogOut, Upload as UploadIcon, FileText, BarChart2 } from 'lucide-react';
 import DocumentCard from '../components/DocumentCard';
 import SkeletonCard from '../components/SkeletonCard';
+import Pagination from '../components/Pagination';
 import UploadModal from '../components/UploadModal';
 import BulkUploadModal from '../components/BulkUploadModal';
+import CacheStatsModal from '../components/CacheStatsModal';
 
 const ITEMS_PER_PAGE = 20;
 const SKELETON_COUNT = 6;
@@ -24,13 +26,12 @@ const DashboardPage: React.FC = () => {
     const [currentPage, setCurrentPage] = useState(1);
     const [isUploadOpen, setIsUploadOpen] = useState(false);
     const [isBulkOpen, setIsBulkOpen] = useState(false);
+    const [isStatsOpen, setIsStatsOpen] = useState(false);
     const { logout } = useAuth();
 
     // Debounce search input (500ms delay)
     useEffect(() => {
-        const timer = setTimeout(() => {
-            setDebouncedQuery(inputValue);
-        }, 500);
+        const timer = setTimeout(() => setDebouncedQuery(inputValue), 500);
         return () => clearTimeout(timer);
     }, [inputValue]);
 
@@ -79,10 +80,10 @@ const DashboardPage: React.FC = () => {
                     <FileText className="primary" />
                     <h1 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Documentale</h1>
                 </div>
-                <div style={{ display: 'flex', gap: '1rem' }}>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
                     <button className="btn" style={{ width: 'auto' }} onClick={() => setIsBulkOpen(true)}>
                         <UploadIcon size={18} style={{ marginRight: '0.5rem' }} />
-                        Carica Intera Cartella
+                        Carica Cartella
                     </button>
                     <button
                         className="btn"
@@ -91,6 +92,14 @@ const DashboardPage: React.FC = () => {
                     >
                         <UploadIcon size={18} style={{ marginRight: '0.5rem' }} />
                         Carica File
+                    </button>
+                    <button
+                        className="btn"
+                        style={{ width: 'auto', background: 'transparent', border: '1px solid var(--glass)', color: 'var(--text-muted)' }}
+                        onClick={() => setIsStatsOpen(true)}
+                        title="Statistiche cache Redis"
+                    >
+                        <BarChart2 size={18} />
                     </button>
                     <button
                         className="btn"
@@ -108,7 +117,7 @@ const DashboardPage: React.FC = () => {
                     <input
                         className="input"
                         style={{ paddingLeft: '3rem', marginBottom: 0 }}
-                        placeholder="Cerca documenti per titolo, tag o contenuto..."
+                        placeholder="Cerca documenti per titolo, tag o contenuto…"
                         value={inputValue}
                         onChange={handleSearchChange}
                     />
@@ -122,7 +131,8 @@ const DashboardPage: React.FC = () => {
                     </div>
                 ) : (
                     <>
-                        <div className="doc-grid">
+                        {/* key forces CSS page-enter animation on page/query change */}
+                        <div className="doc-grid" key={`${currentPage}-${debouncedQuery}`}>
                             {documents.map((doc: any) => (
                                 <DocumentCard key={doc.id} doc={doc} />
                             ))}
@@ -133,47 +143,24 @@ const DashboardPage: React.FC = () => {
                             )}
                         </div>
 
-                        {total > 0 && (
-                            <div className="pagination">
-                                <button
-                                    className="pagination-btn"
-                                    onClick={() => setCurrentPage(p => p - 1)}
-                                    disabled={currentPage === 1}
-                                >
-                                    ← Precedente
-                                </button>
-                                <span className="pagination-info">
-                                    Pagina {currentPage} di {totalPages}
-                                    <br />
-                                    <span style={{ fontSize: '0.78rem' }}>
-                                        {total} document{total !== 1 ? 'i' : 'o'}
-                                    </span>
-                                </span>
-                                <button
-                                    className="pagination-btn"
-                                    onClick={() => setCurrentPage(p => p + 1)}
-                                    disabled={currentPage >= totalPages}
-                                >
-                                    Successiva →
-                                </button>
-                            </div>
-                        )}
+                        <Pagination
+                            currentPage={currentPage}
+                            totalPages={totalPages}
+                            total={total}
+                            onPageChange={setCurrentPage}
+                        />
                     </>
                 )}
             </main>
 
             {isUploadOpen && (
-                <UploadModal
-                    onClose={() => setIsUploadOpen(false)}
-                    onSuccess={handleUploadSuccess}
-                />
+                <UploadModal onClose={() => setIsUploadOpen(false)} onSuccess={handleUploadSuccess} />
             )}
-
             {isBulkOpen && (
-                <BulkUploadModal
-                    onClose={() => setIsBulkOpen(false)}
-                    onSuccess={handleBulkSuccess}
-                />
+                <BulkUploadModal onClose={() => setIsBulkOpen(false)} onSuccess={handleBulkSuccess} />
+            )}
+            {isStatsOpen && (
+                <CacheStatsModal onClose={() => setIsStatsOpen(false)} />
             )}
         </div>
     );

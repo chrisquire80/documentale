@@ -1,8 +1,11 @@
 import json
 import hashlib
+import mimetypes
+import os
+import aiofiles
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, and_, distinct, func
 from sqlalchemy.orm import selectinload
@@ -257,7 +260,31 @@ async def download_document(
         raise HTTPException(status_code=404, detail="Version not found")
 
     file_path = await storage.get_file_path(ver.file_path)
-    return FileResponse(path=file_path, filename=doc.title)
+    file_size = os.path.getsize(file_path)
+
+    # Preserve original extension on the download filename
+    _, stored_ext = os.path.splitext(ver.file_path)
+    download_filename = f"{doc.title}{stored_ext}" if stored_ext else doc.title
+
+    mime_type, _ = mimetypes.guess_type(file_path)
+    mime_type = mime_type or "application/octet-stream"
+
+    async def stream_file():
+        async with aiofiles.open(file_path, "rb") as f:
+            while True:
+                chunk = await f.read(65_536)  # 64 KB chunks
+                if not chunk:
+                    break
+                yield chunk
+
+    return StreamingResponse(
+        stream_file(),
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{download_filename}"',
+            "Content-Length": str(file_size),
+        },
+    )
 
 
 @router.get("/{doc_id}/versions", response_model=List[DocumentVersionResponse])

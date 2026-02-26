@@ -18,13 +18,15 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Length", "Content-Disposition"],
 )
 
-from .api import auth, documents
+from .api import auth, documents, admin
 from .services import watcher
 
 app.include_router(auth.router)
 app.include_router(documents.router)
+app.include_router(admin.router)
 
 
 @app.on_event("startup")
