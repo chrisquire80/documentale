@@ -41,6 +41,11 @@ class DocumentBase(BaseModel):
 class DocumentCreate(DocumentBase):
     pass
 
+class DocumentUpdate(BaseModel):
+    title: Optional[str] = None
+    is_restricted: Optional[bool] = None
+    doc_metadata: Optional[Dict[str, Any]] = None
+
 class DocumentVersionResponse(BaseModel):
     version_num: int
     created_at: datetime
@@ -57,6 +62,8 @@ class DocumentResponse(DocumentBase):
     class Config:
         from_attributes = True
 
+class BulkExportRequest(BaseModel):
+    document_ids: List[UUID]
 
 class PaginatedDocuments(BaseModel):
     items: List[DocumentResponse]

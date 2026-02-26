@@ -9,6 +9,8 @@ import Pagination from '../components/Pagination';
 import UploadModal from '../components/UploadModal';
 import BulkUploadModal from '../components/BulkUploadModal';
 import CacheStatsModal from '../components/CacheStatsModal';
+import SidebarFilters from '../components/SidebarFilters';
+import BulkActionBar from '../components/BulkActionBar';
 
 const ITEMS_PER_PAGE = 20;
 const SKELETON_COUNT = 6;
@@ -23,7 +25,10 @@ interface PaginatedDocuments {
 const DashboardPage: React.FC = () => {
     const [inputValue, setInputValue] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
+    const [selectedTag, setSelectedTag] = useState<string | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
+    const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
+
     const [isUploadOpen, setIsUploadOpen] = useState(false);
     const [isBulkOpen, setIsBulkOpen] = useState(false);
     const [isStatsOpen, setIsStatsOpen] = useState(false);
@@ -35,21 +40,24 @@ const DashboardPage: React.FC = () => {
         return () => clearTimeout(timer);
     }, [inputValue]);
 
-    // Reset to page 1 whenever the search term changes
+    // Reset to page 1 whenever the search term or tag changes
     useEffect(() => {
         setCurrentPage(1);
-    }, [debouncedQuery]);
+    }, [debouncedQuery, selectedTag]);
 
     const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
     const { data, isLoading, refetch } = useQuery<PaginatedDocuments>({
-        queryKey: ['documents', debouncedQuery, currentPage],
+        queryKey: ['documents', debouncedQuery, selectedTag, currentPage],
         queryFn: async () => {
             const params = new URLSearchParams({
                 query: debouncedQuery,
                 limit: String(ITEMS_PER_PAGE),
                 offset: String(offset),
             });
+            if (selectedTag) {
+                params.append('tag', selectedTag);
+            }
             const response = await api.get(`/documents/search?${params}`);
             return response.data;
         },
@@ -59,8 +67,25 @@ const DashboardPage: React.FC = () => {
     const total = data?.total ?? 0;
     const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
 
+    // Estrai i tag univoci dai documenti correnti (e aggiungi il selectedTag se presente per non farlo sparire)
+    const availableTags = React.useMemo(() => {
+        const tags = new Set<string>();
+        documents.forEach((doc: any) => {
+            const docTags = doc.doc_metadata?.tags || [];
+            docTags.forEach((t: string) => tags.add(t));
+        });
+        if (selectedTag) tags.add(selectedTag);
+        return Array.from(tags).sort();
+    }, [documents, selectedTag]);
+
     const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         setInputValue(e.target.value);
+    }, []);
+
+    const toggleDocSelection = useCallback((id: string) => {
+        setSelectedDocs(prev =>
+            prev.includes(id) ? prev.filter(docId => docId !== id) : [...prev, id]
+        );
     }, []);
 
     const handleUploadSuccess = useCallback(() => {
@@ -112,46 +137,69 @@ const DashboardPage: React.FC = () => {
             </nav>
 
             <main className="container">
-                <div style={{ position: 'relative', marginBottom: '2rem' }}>
-                    <Search style={{ position: 'absolute', left: '1rem', top: '1rem', color: 'var(--text-muted)' }} size={20} />
-                    <input
-                        className="input"
-                        style={{ paddingLeft: '3rem', marginBottom: 0 }}
-                        placeholder="Cerca documenti per titolo, tag o contenuto…"
-                        value={inputValue}
-                        onChange={handleSearchChange}
+                <div className="dashboard-layout">
+                    {/* Sidebar Filtri */}
+                    <SidebarFilters
+                        availableTags={availableTags}
+                        selectedTag={selectedTag}
+                        onSelectTag={setSelectedTag}
                     />
-                </div>
 
-                {isLoading ? (
-                    <div className="doc-grid">
-                        {Array.from({ length: SKELETON_COUNT }).map((_, i) => (
-                            <SkeletonCard key={i} />
-                        ))}
-                    </div>
-                ) : (
-                    <>
-                        {/* key forces CSS page-enter animation on page/query change */}
-                        <div className="doc-grid" key={`${currentPage}-${debouncedQuery}`}>
-                            {documents.map((doc: any) => (
-                                <DocumentCard key={doc.id} doc={doc} />
-                            ))}
-                            {documents.length === 0 && (
-                                <div style={{ textAlign: 'center', gridColumn: '1/-1', color: 'var(--text-muted)', marginTop: '4rem' }}>
-                                    Nessun documento trovato.
-                                </div>
-                            )}
+                    {/* Contenuto Principale */}
+                    <div className="main-content">
+                        <div style={{ position: 'relative', marginBottom: '2rem' }}>
+                            <Search style={{ position: 'absolute', left: '1rem', top: '1rem', color: 'var(--text-muted)' }} size={20} />
+                            <input
+                                className="input"
+                                style={{ paddingLeft: '3rem', marginBottom: 0 }}
+                                placeholder="Cerca documenti per titolo, tag o contenuto…"
+                                value={inputValue}
+                                onChange={handleSearchChange}
+                            />
                         </div>
 
-                        <Pagination
-                            currentPage={currentPage}
-                            totalPages={totalPages}
-                            total={total}
-                            onPageChange={setCurrentPage}
-                        />
-                    </>
-                )}
+                        {isLoading ? (
+                            <div className="doc-grid" style={{ marginTop: '1rem' }}>
+                                {Array.from({ length: SKELETON_COUNT }).map((_, i) => (
+                                    <SkeletonCard key={i} />
+                                ))}
+                            </div>
+                        ) : (
+                            <>
+                                {/* key forces CSS page-enter animation on page/query change */}
+                                <div className="doc-grid" key={`${currentPage}-${debouncedQuery}-${selectedTag}`} style={{ marginTop: '1rem' }}>
+                                    {documents.map((doc: any) => (
+                                        <DocumentCard
+                                            key={doc.id}
+                                            doc={doc}
+                                            onUpdate={refetch}
+                                            isSelected={selectedDocs.includes(doc.id)}
+                                            onToggleSelect={toggleDocSelection}
+                                        />
+                                    ))}
+                                    {documents.length === 0 && (
+                                        <div style={{ textAlign: 'center', gridColumn: '1/-1', color: 'var(--text-muted)', marginTop: '4rem' }}>
+                                            Nessun documento trovato.
+                                        </div>
+                                    )}
+                                </div>
+
+                                <Pagination
+                                    currentPage={currentPage}
+                                    totalPages={totalPages}
+                                    total={total}
+                                    onPageChange={setCurrentPage}
+                                />
+                            </>
+                        )}
+                    </div>
+                </div>
             </main>
+
+            <BulkActionBar
+                selectedIds={selectedDocs}
+                onClearSelection={() => setSelectedDocs([])}
+            />
 
             {isUploadOpen && (
                 <UploadModal onClose={() => setIsUploadOpen(false)} onSuccess={handleUploadSuccess} />

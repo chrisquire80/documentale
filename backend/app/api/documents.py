@@ -16,7 +16,7 @@ from ..db import get_db, SessionLocal
 from ..models.user import User, UserRole
 from ..models.document import Document, DocumentVersion, DocumentMetadata, DocumentContent
 from ..models.audit import AuditLog
-from ..schemas.doc_schemas import DocumentResponse, DocumentCreate, DocumentVersionResponse, PaginatedDocuments
+from ..schemas.doc_schemas import DocumentResponse, DocumentCreate, DocumentVersionResponse, PaginatedDocuments, DocumentUpdate, BulkExportRequest
 from ..api.auth import get_current_user
 from ..core.storage import get_storage, StorageLayer, LocalStorage
 from ..core.cache import get_redis
@@ -165,6 +165,91 @@ async def upload_document(
     return doc
 
 
+# ── Update ────────────────────────────────────────────────────────────────────
+
+@router.patch("/{doc_id}", response_model=DocumentResponse)
+async def update_document(
+    doc_id: UUID,
+    update_data: DocumentUpdate,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
+):
+    stmt = select(Document).options(selectinload(Document.metadata_entries)).where(Document.id == doc_id)
+    doc = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    # Update base fields
+    if update_data.title is not None:
+        doc.title = update_data.title
+    if update_data.is_restricted is not None:
+        doc.is_restricted = update_data.is_restricted
+
+    # Update metadata
+    if update_data.doc_metadata is not None:
+        if doc.metadata_entries:
+            doc.metadata_entries[0].metadata_json = update_data.doc_metadata
+        else:
+            new_meta = DocumentMetadata(document_id=doc.id, metadata_json=update_data.doc_metadata)
+            db.add(new_meta)
+
+    # Recompute base corpus for FTS if title or metadata changed
+    if update_data.title is not None or update_data.doc_metadata is not None:
+        meta_dict = update_data.doc_metadata if update_data.doc_metadata is not None else (doc.metadata_entries[0].metadata_json if doc.metadata_entries else {})
+        tags_text = " ".join(meta_dict.get("tags", []))
+        author_text = meta_dict.get("author", "")
+        dept_text = meta_dict.get("dept", "")
+        
+        initial_corpus = " ".join(filter(None, [doc.title, author_text, dept_text, tags_text]))
+        
+        # We need the file_path to rerun OCR
+        v_stmt = select(DocumentVersion).where(DocumentVersion.document_id == doc_id, DocumentVersion.version_num == doc.current_version)
+        ver = (await db.execute(v_stmt)).scalar_one_or_none()
+        
+        if ver:
+            # We must schedule OCR again so it appends to the new initial corpus, 
+            # because previous OCR text is mixed into the DB row and we can't easily extract it.
+            # Rerunning OCR ensures consistency.
+            import mimetypes
+            # Try to guess mime type from file path
+            mime_type, _ = mimetypes.guess_type(ver.file_path)
+            mime_type = mime_type or "application/octet-stream"
+            
+            background_tasks.add_task(
+                _run_ocr_background,
+                doc.id,
+                ver.file_path,
+                mime_type,
+                initial_corpus,
+            )
+            
+            # Temporary set the corpus to just the metadata until OCR finishes, or just wait.
+            # The background task will OVERWRITE the DocumentContent.fulltext_content.
+
+    # Audit log
+    audit = AuditLog(user_id=current_user.id, action="UPDATE", target_id=doc.id)
+    db.add(audit)
+
+    await db.commit()
+    await db.refresh(doc, ["metadata_entries", "owner"])
+
+    # Invalidate search cache
+    if redis:
+        try:
+            async for key in redis.scan_iter(f"docs:{current_user.id}:*"):
+                await redis.delete(key)
+        except Exception:
+            pass
+
+    return doc
+
+
 # ── Search ────────────────────────────────────────────────────────────────────
 
 @router.get("/search", response_model=PaginatedDocuments)
@@ -252,12 +337,82 @@ async def search_documents(
     return response
 
 
+# ── Export Bulk (ZIP) ─────────────────────────────────────────────────────────
+
+@router.post("/export-bulk")
+async def export_bulk_documents(
+    request: BulkExportRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    storage: StorageLayer = Depends(get_storage),
+):
+    if not request.document_ids:
+        raise HTTPException(status_code=400, detail="No document IDs provided")
+
+    # Fetch all requested documents with owner
+    stmt = select(Document).options(selectinload(Document.owner)).where(Document.id.in_(request.document_ids))
+    docs = (await db.execute(stmt)).scalars().all()
+
+    if not docs:
+        raise HTTPException(status_code=404, detail="No documents found")
+
+    # Permission check and prepare list
+    export_files = []
+    for doc in docs:
+        if doc.is_restricted and current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+            continue  # Skip restricted files the user can't access
+
+        v_stmt = select(DocumentVersion).where(
+            DocumentVersion.document_id == doc.id,
+            DocumentVersion.version_num == doc.current_version
+        )
+        ver = (await db.execute(v_stmt)).scalar_one_or_none()
+        if ver:
+            file_path = await storage.get_file_path(ver.file_path)
+            if os.path.exists(file_path):
+                _, stored_ext = os.path.splitext(ver.file_path)
+                safe_title = "".join([c for c in doc.title if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).rstrip()
+                download_filename = f"{safe_title}{stored_ext}" if stored_ext else safe_title
+                export_files.append((file_path, download_filename))
+
+    if not export_files:
+        raise HTTPException(status_code=404, detail="No accessible files found to export")
+
+    import zipfile
+    import tempfile
+
+    # Usiamo SpooledTemporaryFile che tiene in memoria fino a un tot e poi salva su disco.
+    # Gestito da yield in un iteratore per lo stream in modo sicuro
+    def iterfile():
+        with tempfile.SpooledTemporaryFile(max_size=10*1024*1024, mode="w+b") as tmp:
+            with zipfile.ZipFile(tmp, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for file_path, arc_name in export_files:
+                    zf.write(file_path, arc_name)
+            
+            # Torna all'inizio del file per la lettura
+            tmp.seek(0)
+            while True:
+                chunk = tmp.read(65_536)
+                if not chunk:
+                    break
+                yield chunk
+
+    return StreamingResponse(
+        iterfile(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="documenti_selezionati.zip"',
+        },
+    )
+
+
 # ── Download (streaming) ──────────────────────────────────────────────────────
 
 @router.get("/{doc_id}/download")
 async def download_document(
     doc_id: UUID,
     version: Optional[int] = None,
+    inline: bool = False,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     storage: StorageLayer = Depends(get_storage),
@@ -298,11 +453,12 @@ async def download_document(
                     break
                 yield chunk
 
+    disposition = "inline" if inline else "attachment"
     return StreamingResponse(
         stream_file(),
         media_type=mime_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{download_filename}"',
+            "Content-Disposition": f'{disposition}; filename="{download_filename}"',
             "Content-Length": str(file_size),
         },
     )

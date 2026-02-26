@@ -1,12 +1,25 @@
-import React, { useState, useCallback } from 'react';
-import { FileDown, Calendar, User } from 'lucide-react';
+import React, { useState, useCallback, useContext } from 'react';
+import { FileDown, Calendar, User, Eye, Pencil } from 'lucide-react';
+import DocumentPreviewModal from './DocumentPreviewModal';
+import EditMetadataModal from './EditMetadataModal';
+import { useAuth } from '../store/AuthContext';
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:8000';
 
-const DocumentCard: React.FC<{ doc: any }> = ({ doc }) => {
+const DocumentCard: React.FC<{
+    doc: any;
+    onUpdate?: () => void;
+    isSelected?: boolean;
+    onToggleSelect?: (id: string) => void;
+}> = ({ doc, onUpdate, isSelected = false, onToggleSelect }) => {
+    const { currentUser } = useAuth();
     // null = idle | 0-100 = percentage during download
     const [progress, setProgress] = useState<number | null>(null);
     const [downloadError, setDownloadError] = useState(false);
+    const [previewOpen, setPreviewOpen] = useState(false);
+    const [editOpen, setEditOpen] = useState(false);
+
+    const canEdit = currentUser?.role === 'ADMIN' || currentUser?.id === doc.owner_id;
 
     const handleDownload = useCallback(async () => {
         setProgress(0);
@@ -24,7 +37,7 @@ const DocumentCard: React.FC<{ doc: any }> = ({ doc }) => {
             const total = contentLength ? parseInt(contentLength, 10) : 0;
 
             const reader = response.body!.getReader();
-            const chunks: Uint8Array[] = [];
+            const chunks: any[] = [];
             let received = 0;
 
             while (true) {
@@ -69,23 +82,57 @@ const DocumentCard: React.FC<{ doc: any }> = ({ doc }) => {
     return (
         <div className="doc-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                <h3 style={{ margin: 0, fontSize: '1.125rem' }}>{doc.title}</h3>
-                <button
-                    onClick={handleDownload}
-                    disabled={progress !== null}
-                    title={downloadError ? 'Download fallito' : 'Scarica'}
-                    style={{
-                        background: 'none',
-                        border: 'none',
-                        cursor: progress !== null ? 'not-allowed' : 'pointer',
-                        color: downloadError ? 'var(--error)' : 'var(--accent)',
-                        opacity: progress !== null && !downloadError ? 0.55 : 1,
-                        display: 'flex',
-                        alignItems: 'center',
-                    }}
-                >
-                    <FileDown size={20} />
-                </button>
+                <h3 style={{ margin: 0, fontSize: '1.125rem', paddingRight: '1rem', wordBreak: 'break-word' }}>{doc.title}</h3>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+                    <button
+                        onClick={() => setPreviewOpen(true)}
+                        title="Anteprima in-browser"
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: 'var(--accent)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: 0
+                        }}
+                    >
+                        <Eye size={20} />
+                    </button>
+                    {canEdit && (
+                        <button
+                            onClick={() => setEditOpen(true)}
+                            title="Modifica Metadati"
+                            style={{
+                                background: 'none',
+                                border: 'none',
+                                cursor: 'pointer',
+                                color: 'var(--text-muted)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                padding: 0
+                            }}
+                        >
+                            <Pencil size={18} />
+                        </button>
+                    )}
+                    <button
+                        onClick={handleDownload}
+                        disabled={progress !== null}
+                        title={downloadError ? 'Download fallito' : 'Scarica'}
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: progress !== null ? 'not-allowed' : 'pointer',
+                            color: downloadError ? 'var(--error)' : 'var(--accent)',
+                            opacity: progress !== null && !downloadError ? 0.55 : 1,
+                            display: 'flex',
+                            alignItems: 'center',
+                        }}
+                    >
+                        <FileDown size={20} />
+                    </button>
+                </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -123,6 +170,57 @@ const DocumentCard: React.FC<{ doc: any }> = ({ doc }) => {
                 <p style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', color: 'var(--error)' }}>
                     Download fallito. Riprova.
                 </p>
+            )}
+
+            {/* Checkbox di selezione bulk (floating on top-left) */}
+            {onToggleSelect && (
+                <div
+                    onClick={(e) => { e.stopPropagation(); onToggleSelect(doc.id); }}
+                    style={{
+                        position: 'absolute',
+                        top: '1rem',
+                        left: '-1rem',
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '6px',
+                        backgroundColor: isSelected ? 'var(--accent)' : 'rgba(0,0,0,0.4)',
+                        border: `2px solid ${isSelected ? 'var(--accent)' : 'var(--glass)'}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        opacity: isSelected ? 1 : 0,
+                        transition: 'opacity 0.2s, background-color 0.2s',
+                        zIndex: 10,
+                        boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
+                    }}
+                    className="doc-checkbox"
+                >
+                    {isSelected && (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="var(--bg-dark)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ width: '16px', height: '16px' }}>
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                    )}
+                </div>
+            )}
+
+            {previewOpen && (
+                <DocumentPreviewModal
+                    isOpen={previewOpen}
+                    onClose={() => setPreviewOpen(false)}
+                    doc={doc}
+                />
+            )}
+
+            {editOpen && (
+                <EditMetadataModal
+                    isOpen={editOpen}
+                    onClose={() => setEditOpen(false)}
+                    doc={doc}
+                    onSaveSuccess={() => {
+                        if (onUpdate) onUpdate();
+                    }}
+                />
             )}
         </div>
     );
