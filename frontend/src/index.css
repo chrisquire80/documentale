@@ -122,12 +122,23 @@ body {
 .skeleton-meta-short  { width: 50%; height: 0.85rem; }
 .skeleton-badge       { width: 4rem; height: 1.4rem; border-radius: 999px; margin-bottom: 0; }
 
-/* ── Paginazione ── */
+/* ── Transizione cambio pagina ── */
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.doc-grid {
+  animation: pageEnter 0.22s ease;
+}
+
+/* ── Paginazione numerata ── */
 .pagination {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 1rem;
+  flex-wrap: wrap;
+  gap: 0.4rem;
   margin-top: 2.5rem;
   padding-bottom: 2rem;
 }
@@ -135,27 +146,64 @@ body {
 .pagination-btn {
   background: transparent;
   color: var(--accent);
-  border: 1px solid var(--accent);
-  padding: 0.5rem 1.25rem;
-  border-radius: 0.5rem;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  padding: 0.4rem 0.8rem;
+  border-radius: 0.4rem;
   cursor: pointer;
   font-weight: 600;
-  transition: all 0.2s;
+  font-size: 0.875rem;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  min-width: 2.2rem;
+  text-align: center;
 }
 
 .pagination-btn:hover:not(:disabled) {
   background: var(--accent);
   color: var(--bg-dark);
+  border-color: var(--accent);
 }
 
 .pagination-btn:disabled {
-  opacity: 0.35;
+  opacity: 0.3;
   cursor: not-allowed;
+}
+
+.pagination-btn--active {
+  background: var(--accent);
+  color: var(--bg-dark);
+  border-color: var(--accent);
+  cursor: default;
+}
+
+.pagination-ellipsis {
+  color: var(--text-muted);
+  padding: 0 0.2rem;
+  font-size: 0.875rem;
+  user-select: none;
 }
 
 .pagination-info {
   color: var(--text-muted);
-  font-size: 0.9rem;
-  min-width: 10ch;
-  text-align: center;
+  font-size: 0.8rem;
+  margin-left: 0.5rem;
+}
+
+/* ── Download progress bar ── */
+.download-progress-bar {
+  height: 3px;
+  background: var(--glass);
+  border-radius: 999px;
+  margin-top: 0.75rem;
+  overflow: hidden;
+}
+
+.download-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.18s ease;
+}
+
+.download-progress-error {
+  background: var(--error);
 }
