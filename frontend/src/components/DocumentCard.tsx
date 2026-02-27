@@ -43,21 +43,19 @@ const DocumentCard: React.FC<{
         }
     });
 
+    // ── Download ──────────────────────────────────────────────────────────────
     const handleDownload = useCallback(async () => {
         setProgress(0);
         setDownloadError(false);
-
         try {
             const token = localStorage.getItem('token');
             const response = await fetch(`${BASE_URL}/documents/${doc.id}/download`, {
                 headers: token ? { Authorization: `Bearer ${token}` } : {},
             });
-
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
             const contentLength = response.headers.get('Content-Length');
             const total = contentLength ? parseInt(contentLength, 10) : 0;
-
             const reader = response.body!.getReader();
             const chunks: any[] = [];
             let received = 0;
@@ -67,14 +65,10 @@ const DocumentCard: React.FC<{
                 if (done) break;
                 chunks.push(value);
                 received += value.length;
-                if (total > 0) {
-                    setProgress(Math.min(99, Math.round((received / total) * 100)));
-                }
+                if (total > 0) setProgress(Math.min(99, Math.round((received / total) * 100)));
             }
-
             setProgress(100);
 
-            // Use filename from Content-Disposition if available
             const disposition = response.headers.get('Content-Disposition') ?? '';
             const match = disposition.match(/filename="(.+?)"/);
             const filename = match ? match[1] : doc.title;
@@ -89,15 +83,10 @@ const DocumentCard: React.FC<{
             link.remove();
             URL.revokeObjectURL(url);
 
-            // Brief pause so the user sees 100% before the bar disappears
             setTimeout(() => setProgress(null), 800);
-        } catch (err) {
-            console.error('Download failed', err);
+        } catch {
             setDownloadError(true);
-            setTimeout(() => {
-                setDownloadError(false);
-                setProgress(null);
-            }, 2500);
+            setTimeout(() => { setDownloadError(false); setProgress(null); }, 2500);
         }
     }, [doc.id, doc.title]);
 

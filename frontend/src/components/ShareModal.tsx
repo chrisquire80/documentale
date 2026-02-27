@@ -25,14 +25,12 @@ const ShareModal: React.FC<ShareModalProps> = ({ docId, fileName, onClose }) => 
             const payload: any = {};
             if (passkey.trim()) payload.passkey = passkey.trim();
             if (expiresAt) {
-                // Convert minimal datetime-local to ISO if needed, or send as is if ISO-like
                 const dateObj = new Date(expiresAt);
                 payload.expires_at = dateObj.toISOString();
             }
 
             const response = await api.post(`/documents/${docId}/share`, payload);
 
-            // Build the frontend URL
             const url = new URL(window.location.href);
             const shareUrl = `${url.protocol}//${url.host}/shared/${response.data.token}`;
             setGeneratedLink(shareUrl);

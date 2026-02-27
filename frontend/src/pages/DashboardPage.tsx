@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { useAuth } from '../store/AuthContext';
 import { Search, LogOut, Upload as UploadIcon, FileText, BarChart2, Trash2, Database } from 'lucide-react';
@@ -24,6 +24,7 @@ interface PaginatedDocuments {
 }
 
 const DashboardPage: React.FC = () => {
+    const queryClient = useQueryClient();
     const [inputValue, setInputValue] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
     const [selectedTag, setSelectedTag] = useState<string | null>(null);
@@ -36,7 +37,7 @@ const DashboardPage: React.FC = () => {
     const [isDocStatsOpen, setIsDocStatsOpen] = useState(false);
     const { logout } = useAuth();
 
-    // Debounce search input (500ms delay)
+    // Debounce
     useEffect(() => {
         const timer = setTimeout(() => setDebouncedQuery(inputValue), 500);
         return () => clearTimeout(timer);
@@ -53,23 +54,26 @@ const DashboardPage: React.FC = () => {
         queryKey: ['documents', debouncedQuery, selectedTag, currentPage],
         queryFn: async () => {
             const params = new URLSearchParams({
-                query: debouncedQuery,
                 limit: String(ITEMS_PER_PAGE),
                 offset: String(offset),
             });
-            if (selectedTag) {
-                params.append('tag', selectedTag);
-            }
+            if (debouncedQuery) params.set('query', debouncedQuery);
+            if (selectedTag) params.append('tag', selectedTag);
             const response = await api.get(`/documents/search?${params}`);
             return response.data;
         },
     });
 
-    const documents = data?.items ?? [];
+    const [documents, setDocuments] = useState<any[]>([]);
+
+    useEffect(() => {
+        if (data?.items) setDocuments(data.items);
+    }, [data]);
+
     const total = data?.total ?? 0;
     const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
 
-    // Estrai i tag univoci dai documenti correnti (e aggiungi il selectedTag se presente per non farlo sparire)
+    // Estrai i tag univoci dai documenti correnti
     const availableTags = React.useMemo(() => {
         const tags = new Set<string>();
         documents.forEach((doc: any) => {
@@ -102,6 +106,7 @@ const DashboardPage: React.FC = () => {
 
     return (
         <div>
+            {/* ── Navbar ── */}
             <nav className="nav">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <FileText className="primary" />
@@ -118,16 +123,16 @@ const DashboardPage: React.FC = () => {
                         Cestino
                     </button>
                     <button className="btn" style={{ width: 'auto' }} onClick={() => setIsBulkOpen(true)}>
-                        <UploadIcon size={18} style={{ marginRight: '0.5rem' }} />
-                        Carica Cartella
+                        <UploadIcon size={16} style={{ marginRight: '0.4rem' }} />
+                        Cartella
                     </button>
                     <button
                         className="btn"
                         style={{ width: 'auto', background: 'transparent', border: '1px solid var(--accent)', color: 'var(--accent)' }}
                         onClick={() => setIsUploadOpen(true)}
                     >
-                        <UploadIcon size={18} style={{ marginRight: '0.5rem' }} />
-                        Carica File
+                        <UploadIcon size={16} style={{ marginRight: '0.4rem' }} />
+                        File
                     </button>
                     <button
                         className="btn"
@@ -149,8 +154,9 @@ const DashboardPage: React.FC = () => {
                         className="btn"
                         style={{ width: 'auto', background: 'transparent', border: '1px solid var(--glass)' }}
                         onClick={logout}
+                        title="Esci"
                     >
-                        <LogOut size={18} />
+                        <LogOut size={16} />
                     </button>
                 </div>
             </nav>
