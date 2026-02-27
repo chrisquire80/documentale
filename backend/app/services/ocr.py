@@ -44,7 +44,13 @@ async def extract_text(file_path: str, content_type: str) -> str:
         if content_type.startswith("image/"):
             return await _extract_image(file_path)
 
-        # Tipi non supportati (docx, ecc.) → stringa vuota per ora
+        if content_type in (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword",
+        ):
+            return await _extract_docx(file_path)
+
+        # Tipi non supportati → stringa vuota
         return ""
 
     except Exception as exc:  # noqa: BLE001
@@ -99,6 +105,19 @@ async def _extract_txt(path: str) -> str:
     """Lettura diretta di file di testo semplice."""
     async with aiofiles.open(path, "r", encoding="utf-8", errors="replace") as f:
         return (await f.read()).strip()
+
+
+async def _extract_docx(path: str) -> str:
+    """Estrae testo da file .docx tramite python-docx."""
+
+    def _sync() -> str:
+        from docx import Document  # lazy import
+
+        doc = Document(path)
+        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+        return " ".join(paragraphs).strip()
+
+    return await asyncio.get_event_loop().run_in_executor(None, _sync)
 
 
 async def _extract_image(path: str) -> str:

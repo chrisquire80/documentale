@@ -41,17 +41,24 @@ class DocumentBase(BaseModel):
 class DocumentCreate(DocumentBase):
     pass
 
+class DocumentUpdate(BaseModel):
+    title: Optional[str] = None
+    is_restricted: Optional[bool] = None
+    metadata_json: Optional[Dict[str, Any]] = None
+
 class DocumentVersionResponse(BaseModel):
     version_num: int
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
 class DocumentResponse(DocumentBase):
     id: UUID
+    file_type: Optional[str] = None
     current_version: int
     owner_id: UUID
+    is_deleted: bool = False
     created_at: datetime
 
     class Config:
@@ -63,3 +70,18 @@ class PaginatedDocuments(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# Document Sharing
+class DocumentShareCreate(BaseModel):
+    shared_with_email: str
+
+class DocumentShareResponse(BaseModel):
+    id: UUID
+    document_id: UUID
+    shared_with_id: UUID
+    shared_by_id: UUID
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
