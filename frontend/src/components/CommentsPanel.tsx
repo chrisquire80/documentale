@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Send, User, MessageSquare } from 'lucide-react';
 import api from '../services/api';
-import { useAuth } from '../store/AuthContext';
 
 interface Comment {
     id: string;

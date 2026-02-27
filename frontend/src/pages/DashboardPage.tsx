@@ -2,13 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../services/api';
 import { useAuth } from '../store/AuthContext';
-import { Search, LogOut, Upload as UploadIcon, FileText, BarChart2 } from 'lucide-react';
+import { Search, LogOut, Upload as UploadIcon, FileText, BarChart2, Trash2, Database } from 'lucide-react';
 import DocumentCard from '../components/DocumentCard';
 import SkeletonCard from '../components/SkeletonCard';
 import Pagination from '../components/Pagination';
 import UploadModal from '../components/UploadModal';
 import BulkUploadModal from '../components/BulkUploadModal';
 import CacheStatsModal from '../components/CacheStatsModal';
+import DashboardStatsModal from '../components/DashboardStatsModal';
 import SidebarFilters from '../components/SidebarFilters';
 import BulkActionBar from '../components/BulkActionBar';
 
@@ -32,6 +33,7 @@ const DashboardPage: React.FC = () => {
     const [isUploadOpen, setIsUploadOpen] = useState(false);
     const [isBulkOpen, setIsBulkOpen] = useState(false);
     const [isStatsOpen, setIsStatsOpen] = useState(false);
+    const [isDocStatsOpen, setIsDocStatsOpen] = useState(false);
     const { logout } = useAuth();
 
     // Debounce search input (500ms delay)
@@ -106,6 +108,15 @@ const DashboardPage: React.FC = () => {
                     <h1 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Documentale</h1>
                 </div>
                 <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    <button
+                        className="btn"
+                        style={{ width: 'auto', background: 'transparent', border: '1px solid var(--error)', color: 'var(--error)' }}
+                        onClick={() => window.location.href = '/trash'}
+                        title="Cestino"
+                    >
+                        <Trash2 size={18} style={{ marginRight: '0.5rem' }} />
+                        Cestino
+                    </button>
                     <button className="btn" style={{ width: 'auto' }} onClick={() => setIsBulkOpen(true)}>
                         <UploadIcon size={18} style={{ marginRight: '0.5rem' }} />
                         Carica Cartella
@@ -121,10 +132,18 @@ const DashboardPage: React.FC = () => {
                     <button
                         className="btn"
                         style={{ width: 'auto', background: 'transparent', border: '1px solid var(--glass)', color: 'var(--text-muted)' }}
+                        onClick={() => setIsDocStatsOpen(true)}
+                        title="Statistiche Documenti"
+                    >
+                        <BarChart2 size={18} />
+                    </button>
+                    <button
+                        className="btn"
+                        style={{ width: 'auto', background: 'transparent', border: '1px solid var(--glass)', color: 'var(--accent)' }}
                         onClick={() => setIsStatsOpen(true)}
                         title="Statistiche cache Redis"
                     >
-                        <BarChart2 size={18} />
+                        <Database size={18} />
                     </button>
                     <button
                         className="btn"
@@ -209,6 +228,9 @@ const DashboardPage: React.FC = () => {
             )}
             {isStatsOpen && (
                 <CacheStatsModal onClose={() => setIsStatsOpen(false)} />
+            )}
+            {isDocStatsOpen && (
+                <DashboardStatsModal onClose={() => setIsDocStatsOpen(false)} />
             )}
         </div>
     );

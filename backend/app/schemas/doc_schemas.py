@@ -58,6 +58,7 @@ class DocumentResponse(DocumentBase):
     current_version: int
     owner_id: UUID
     created_at: datetime
+    deleted_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

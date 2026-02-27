@@ -99,6 +99,10 @@ async def startup():
     # Avvia servizio Watchdog in background
     watcher.start_watcher()
 
+    # Avvia cleanup cestino (background)
+    from .services.trash_cleanup import start_trash_scheduler
+    asyncio.create_task(start_trash_scheduler(interval_hours=24, retention_days=30))
+
 
 @app.on_event("shutdown")
 async def shutdown():

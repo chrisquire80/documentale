@@ -10,8 +10,10 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update as sa_update, or_, and_, distinct, func, cast
 from sqlalchemy.orm import selectinload
+import asyncio
 from typing import List, Optional
 from uuid import UUID
+from datetime import datetime
 
 from ..db import get_db, SessionLocal
 from ..models.user import User, UserRole
@@ -209,11 +211,11 @@ async def update_document(
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
 ):
-    stmt = select(Document).options(selectinload(Document.metadata_entries)).where(Document.id == doc_id)
+    stmt = select(Document).options(selectinload(Document.metadata_entries)).where(Document.id == doc_id, Document.deleted_at.is_(None))
     doc = (await db.execute(stmt)).scalar_one_or_none()
 
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="Document not found or in trash")
 
     if current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Permission denied")
@@ -310,7 +312,7 @@ async def search_documents(
         except Exception:
             pass
 
-    filters = []
+    filters = [Document.deleted_at.is_(None)]
     need_content_join = False
     need_meta_join = False
 
@@ -401,12 +403,15 @@ async def export_bulk_documents(
     if not request.document_ids:
         raise HTTPException(status_code=400, detail="No document IDs provided")
 
-    # Fetch all requested documents with owner
-    stmt = select(Document).options(selectinload(Document.owner)).where(Document.id.in_(request.document_ids))
+    # Fetch all requested documents with owner that are not deleted
+    stmt = select(Document).options(selectinload(Document.owner)).where(
+        Document.id.in_(request.document_ids),
+        Document.deleted_at.is_(None)
+    )
     docs = (await db.execute(stmt)).scalars().all()
 
     if not docs:
-        raise HTTPException(status_code=404, detail="No documents found")
+        raise HTTPException(status_code=404, detail="No active documents found")
 
     # Permission check and prepare list
     export_files = []
@@ -538,3 +543,178 @@ async def get_document_history(
         .order_by(DocumentVersion.version_num.desc())
     )
     return (await db.execute(v_stmt)).scalars().all()
+
+
+# ── Statistiche ─────────────────────────────────────────────────────────────────
+
+@router.get("/stats")
+async def get_documents_stats(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.role != UserRole.ADMIN:
+        # Se non è admin, torna le statistiche solo dei suoi documenti o vuoto
+        filters = [Document.deleted_at.is_(None), Document.owner_id == current_user.id]
+    else:
+        filters = [Document.deleted_at.is_(None)]
+        
+    # Totale documenti attivi
+    total_docs_stmt = select(func.count(distinct(Document.id))).where(*filters)
+    total_docs = (await db.execute(total_docs_stmt)).scalar() or 0
+    
+    # Per semplicità, in questa prima iterazione carichiamo tutti i documenti rilevanti
+    # ed estraiamo i tag in memoria (essendo un JSON)
+    docs_stmt = select(Document).options(selectinload(Document.metadata_entries)).where(*filters)
+    docs = (await db.execute(docs_stmt)).scalars().all()
+    
+    tags_count = {}
+    users_count = {}
+    
+    for d in docs:
+        users_count[str(d.owner_id)] = users_count.get(str(d.owner_id), 0) + 1
+        
+        if d.metadata_entries and d.metadata_entries[0].metadata_json:
+            doc_tags = d.metadata_entries[0].metadata_json.get("tags", [])
+            for t in doc_tags:
+                tags_count[t] = tags_count.get(t, 0) + 1
+                
+    # Ordinamento tag: top 10
+    top_tags = dict(sorted(tags_count.items(), key=lambda item: item[1], reverse=True)[:10])
+    
+    return {
+        "total_documents": total_docs,
+        "by_tags": top_tags,
+        "by_users": users_count
+    }
+
+# ── Cestino / Soft Delete ─────────────────────────────────────────────────────
+
+@router.get("/trash", response_model=PaginatedDocuments)
+async def get_trash(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if current_user.role != UserRole.ADMIN:
+        # User only sees their own deleted items
+        filters = [Document.deleted_at.isnot(None), Document.owner_id == current_user.id]
+    else:
+        filters = [Document.deleted_at.isnot(None)]
+
+    count_stmt = select(func.count(distinct(Document.id))).select_from(Document).where(*filters)
+    total: int = (await db.execute(count_stmt)).scalar() or 0
+
+    stmt = select(Document).options(
+        selectinload(Document.metadata_entries),
+        selectinload(Document.owner)
+    ).where(*filters).order_by(Document.deleted_at.desc()).offset(offset).limit(limit)
+
+    documents = list((await db.execute(stmt)).scalars().unique().all())
+
+    return PaginatedDocuments(
+        items=[DocumentResponse.model_validate(d) for d in documents],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+@router.delete("/{doc_id}")
+async def soft_delete_document(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis)
+):
+    stmt = select(Document).where(Document.id == doc_id, Document.deleted_at.is_(None))
+    doc = (await db.execute(stmt)).scalar_one_or_none()
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found or already in trash")
+        
+    if current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+        
+    doc.deleted_at = func.now()
+    
+    audit = AuditLog(user_id=current_user.id, action="SOFT_DELETE", target_id=doc.id)
+    db.add(audit)
+    
+    await db.commit()
+    
+    if redis:
+        try:
+            async for key in redis.scan_iter(f"docs:{current_user.id}:*"):
+                await redis.delete(key)
+        except Exception:
+            pass
+            
+    return {"message": "Document moved to trash"}
+
+@router.post("/{doc_id}/restore", response_model=DocumentResponse)
+async def restore_document(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis)
+):
+    stmt = select(Document).options(selectinload(Document.metadata_entries), selectinload(Document.owner)).where(Document.id == doc_id, Document.deleted_at.isnot(None))
+    doc = (await db.execute(stmt)).scalar_one_or_none()
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found in trash")
+        
+    if current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+        
+    doc.deleted_at = None
+    
+    audit = AuditLog(user_id=current_user.id, action="RESTORE", target_id=doc.id)
+    db.add(audit)
+    
+    await db.commit()
+    await db.refresh(doc)
+    
+    if redis:
+        try:
+            async for key in redis.scan_iter(f"docs:{current_user.id}:*"):
+                await redis.delete(key)
+        except Exception:
+            pass
+            
+    return doc
+
+@router.delete("/{doc_id}/hard")
+async def hard_delete_document(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    storage: StorageLayer = Depends(get_storage),
+    redis=Depends(get_redis)
+):
+    stmt = select(Document).options(selectinload(Document.versions)).where(Document.id == doc_id, Document.deleted_at.isnot(None))
+    doc = (await db.execute(stmt)).scalar_one_or_none()
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found in trash. Soft delete it first.")
+        
+    if current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+        
+    # Delete associated files from storage
+    if hasattr(doc, 'versions') and doc.versions:
+        for ver in doc.versions:
+            try:
+                await storage.delete_file(ver.file_path)
+            except Exception as e:
+                logger.error(f"Failed to delete artifact {ver.file_path} for doc {doc_id}: {e}")
+                
+    # Delete from DB
+    await db.delete(doc)
+    
+    audit = AuditLog(user_id=current_user.id, action="HARD_DELETE", target_id=doc.id)
+    db.add(audit)
+    
+    await db.commit()
+    
+    return {"message": "Document permanently deleted"}

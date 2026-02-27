@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './store/AuthContext';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import PublicDownloadPage from './pages/PublicDownloadPage';
+import TrashPage from './pages/TrashPage';
 
 const queryClient = new QueryClient();
 
@@ -27,6 +28,14 @@ const AppContent: React.FC = () => {
         element={
           <ProtectedRoute>
             <DashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/trash"
+        element={
+          <ProtectedRoute>
+            <TrashPage />
           </ProtectedRoute>
         }
       />

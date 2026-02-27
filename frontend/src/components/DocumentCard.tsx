@@ -1,5 +1,7 @@
 import React, { useState, useCallback } from 'react';
-import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import axios from 'axios';
+import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2 } from 'lucide-react';
 import DocumentPreviewModal from './DocumentPreviewModal';
 import EditMetadataModal from './EditMetadataModal';
 import DocumentVersionModal from './DocumentVersionModal';
@@ -16,6 +18,7 @@ const DocumentCard: React.FC<{
     onToggleSelect?: (id: string) => void;
 }> = ({ doc, onUpdate, isSelected = false, onToggleSelect }) => {
     const { currentUser } = useAuth();
+    const queryClient = useQueryClient();
     // null = idle | 0-100 = percentage during download
     const [progress, setProgress] = useState<number | null>(null);
     const [downloadError, setDownloadError] = useState(false);
@@ -26,6 +29,19 @@ const DocumentCard: React.FC<{
     const [versionOpen, setVersionOpen] = useState(false);
 
     const canEdit = (currentUser?.role as string) === 'ADMIN' || currentUser?.id === doc.owner_id;
+
+    const softDeleteMutation = useMutation({
+        mutationFn: (docId: string) => {
+            const token = localStorage.getItem('token');
+            return axios.delete(`${BASE_URL}/api/documents/${docId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['documents'] });
+            if (onUpdate) onUpdate();
+        }
+    });
 
     const handleDownload = useCallback(async () => {
         setProgress(0);
@@ -167,6 +183,29 @@ const DocumentCard: React.FC<{
                     >
                         <History size={18} />
                     </button>
+                    {canEdit && (
+                        <button
+                            onClick={() => {
+                                if (confirm('Sei sicuro di voler spostare questo documento nel cestino?')) {
+                                    softDeleteMutation.mutate(doc.id);
+                                }
+                            }}
+                            disabled={softDeleteMutation.isPending}
+                            title="Sposta nel Cestino"
+                            style={{
+                                background: 'none',
+                                border: 'none',
+                                cursor: softDeleteMutation.isPending ? 'wait' : 'pointer',
+                                color: 'var(--error)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                padding: 0,
+                                opacity: softDeleteMutation.isPending ? 0.5 : 1
+                            }}
+                        >
+                            <Trash2 size={18} />
+                        </button>
+                    )}
                     <button
                         onClick={handleDownload}
                         disabled={progress !== null}
