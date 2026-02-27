@@ -10,7 +10,7 @@ from uuid import UUID
 from ..db import get_db
 from ..models.user import User, UserRole
 from ..models.document import Document, DocumentVersion
-from ..models.share import DocumentShare
+from ..models.share import DocumentPublicShare
 from ..schemas.share_schemas import ShareCreate, ShareResponse, ShareInfoResponse, ShareAccessRequest
 from ..api.auth import get_current_user
 from ..core.security import get_password_hash, verify_password
@@ -39,7 +39,7 @@ async def create_share(
     token = secrets.token_urlsafe(32)
     hashed_passkey = get_password_hash(req.passkey) if req.passkey else None
 
-    share = DocumentShare(
+    share = DocumentPublicShare(
         document_id=doc_id,
         shared_by_id=current_user.id,
         token=token,
@@ -59,7 +59,7 @@ async def create_share(
 
 @router.get("/shared/{token}", response_model=ShareInfoResponse)
 async def get_shared_document_info(token: str, db: AsyncSession = Depends(get_db)):
-    stmt = select(DocumentShare).options(selectinload(DocumentShare.document)).where(DocumentShare.token == token)
+    stmt = select(DocumentPublicShare).options(selectinload(DocumentPublicShare.document)).where(DocumentPublicShare.token == token)
     share = (await db.execute(stmt)).scalar_one_or_none()
     
     if not share or share.is_expired():
@@ -78,7 +78,7 @@ async def download_shared_document(
     db: AsyncSession = Depends(get_db),
     storage: StorageLayer = Depends(get_storage)
 ):
-    stmt = select(DocumentShare).options(selectinload(DocumentShare.document)).where(DocumentShare.token == token)
+    stmt = select(DocumentPublicShare).options(selectinload(DocumentPublicShare.document)).where(DocumentPublicShare.token == token)
     share = (await db.execute(stmt)).scalar_one_or_none()
     
     if not share or share.is_expired():

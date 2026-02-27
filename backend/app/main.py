@@ -30,9 +30,9 @@ app.add_middleware(
     expose_headers=["Content-Length", "Content-Disposition"],
 )
 
-from .api import auth, documents, admin, shares, comments, ws
+from .api import auth, documents, admin, shares, comments, ws, ai
 from .services import watcher
-from .models.share import DocumentShare
+from .models.share import DocumentPublicShare
 from .models.comment import DocumentComment
 
 app.include_router(auth.router)
@@ -41,6 +41,7 @@ app.include_router(admin.router)
 app.include_router(shares.router)
 app.include_router(comments.router)
 app.include_router(ws.router)
+app.include_router(ai.router, prefix="/ai", tags=["AI"])
 
 
 @app.on_event("startup")

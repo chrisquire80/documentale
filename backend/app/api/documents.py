@@ -23,7 +23,7 @@ from ..models.audit import AuditLog
 from pgvector.sqlalchemy import Vector
 from ..schemas.doc_schemas import (
     DocumentResponse, DocumentCreate, DocumentVersionResponse, PaginatedDocuments,
-    DocumentUpdate, BulkExportRequest, DocumentShareCreate, DocumentShareResponse,
+    DocumentUpdate, BulkExportRequest, BulkDeleteRequest, DocumentShareCreate, DocumentShareResponse,
 )
 from ..api.auth import get_current_user
 from ..api.ws import manager
@@ -577,6 +577,7 @@ async def search_documents(
 @limiter.limit("60/minute")
 async def get_related_documents(
     doc_id: UUID,
+    request: Request,
     limit: int = Query(5, ge=1, le=10),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -1054,3 +1055,45 @@ async def hard_delete_document(
     await db.commit()
     
     return {"message": "Document permanently deleted"}
+
+@router.post("/bulk-delete")
+async def bulk_delete_documents(
+    request: BulkDeleteRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis)
+):
+    if not request.document_ids:
+        raise HTTPException(status_code=400, detail="No document IDs provided")
+
+    # Selection documents not already deleted
+    stmt = select(Document).where(
+        Document.id.in_(request.document_ids),
+        Document.deleted_at.is_(None)
+    )
+    docs = (await db.execute(stmt)).scalars().all()
+
+    if not docs:
+        raise HTTPException(status_code=404, detail="No documents found to delete")
+
+    deleted_count = 0
+    for doc in docs:
+        # Permission check: owner or ADMIN
+        if current_user.role == UserRole.ADMIN or doc.owner_id == current_user.id:
+            doc.deleted_at = func.now()
+            db.add(AuditLog(user_id=current_user.id, action="SOFT_DELETE_BULK", target_id=doc.id))
+            deleted_count += 1
+
+    if deleted_count == 0:
+        raise HTTPException(status_code=403, detail="Permission denied for all selected documents")
+
+    await db.commit()
+
+    if redis:
+        try:
+            async for key in redis.scan_iter(f"docs:{current_user.id}:*"):
+                await redis.delete(key)
+        except Exception:
+            pass
+
+    return {"message": f"Successfully moved {deleted_count} documents to trash"}

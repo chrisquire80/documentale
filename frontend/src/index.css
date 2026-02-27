@@ -67,9 +67,9 @@ body {
 
 .doc-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 1.5rem;
-  margin-top: 2rem;
+  margin-top: 1rem;
 }
 
 .doc-card {
@@ -287,6 +287,38 @@ body {
   width: min(95vw, 1000px) !important;
 }
 
+/* ── Document Checkbox (Inline) ── */
+.doc-checkbox-inline {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 2px solid var(--glass);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: var(--bg-dark);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.doc-checkbox-inline:hover {
+  border-color: var(--accent);
+  background: rgba(56, 189, 248, 0.1);
+}
+
+.doc-checkbox-inline.selected {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.doc-checkbox-inline svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* ── Icon button ── */
 .icon-btn {
   background: none;
@@ -314,13 +346,13 @@ body {
 
 /* ── Filter sidebar ── */
 .filter-sidebar {
-  width: 220px;
+  width: 280px;
   flex-shrink: 0;
   background: var(--bg-card);
   border: 1px solid var(--glass);
   border-radius: 0.75rem;
   padding: 1.25rem;
-  margin-top: 2rem;
+  margin-top: 0;
   align-self: flex-start;
   position: sticky;
   top: 1rem;

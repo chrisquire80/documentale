@@ -72,6 +72,9 @@ class DocumentResponse(DocumentBase):
 class BulkExportRequest(BaseModel):
     document_ids: List[UUID]
 
+class BulkDeleteRequest(BaseModel):
+    document_ids: List[UUID]
+
 class PaginatedDocuments(BaseModel):
     items: List[DocumentResponse]
     total: int

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from ..db import SessionLocal
 from ..models.document import Document
-from ..services.storage import StorageLayer
+from ..core.storage import StorageLayer, get_storage
 
 logger = logging.getLogger(__name__)
 
@@ -14,9 +14,9 @@ async def cleanup_trash(retention_days: int = 30):
     longer than `retention_days`.
     """
     logger.info(f"Starting trash cleanup. Rentention configured for {retention_days} days.")
-    cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    cutoff_date = datetime.now() - timedelta(days=retention_days)
     
-    storage = StorageLayer()
+    storage = get_storage()
     deleted_count = 0
     
     try:

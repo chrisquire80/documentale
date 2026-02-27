@@ -69,17 +69,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             const res = await api.get<CurrentUser>('/auth/me');
             setCurrentUser(res.data);
+            setIsAuthenticated(true);
         } catch {
             setCurrentUser(null);
+            setIsAuthenticated(false);
+            localStorage.removeItem('token');
+            localStorage.removeItem('refreshToken');
         }
     };
 
     useEffect(() => {
         const token = localStorage.getItem('token');
         if (token) {
-            setIsAuthenticated(true);
             fetchMe().finally(() => setIsLoading(false));
         } else {
+            setIsAuthenticated(false);
             setIsLoading(false);
         }
     }, []);

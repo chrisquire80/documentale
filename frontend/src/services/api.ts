@@ -41,10 +41,12 @@ api.interceptors.response.use(
                     localStorage.removeItem('token');
                     localStorage.removeItem('refreshToken');
                     window.location.href = '/login';
+                    return Promise.reject(refreshError);
                 }
             } else {
                 localStorage.removeItem('token');
                 window.location.href = '/login';
+                return Promise.reject(error);
             }
         }
 

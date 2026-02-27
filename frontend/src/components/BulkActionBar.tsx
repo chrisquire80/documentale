@@ -1,13 +1,14 @@
 import React from 'react';
-import { Download, X } from 'lucide-react';
+import { Download, X, Trash2 } from 'lucide-react';
 import api from '../services/api';
 
 interface BulkActionBarProps {
     selectedIds: string[];
     onClearSelection: () => void;
+    onSuccess?: () => void;
 }
 
-const BulkActionBar: React.FC<BulkActionBarProps> = ({ selectedIds, onClearSelection }) => {
+const BulkActionBar: React.FC<BulkActionBarProps> = ({ selectedIds, onClearSelection, onSuccess }) => {
     const [isExporting, setIsExporting] = React.useState(false);
 
     if (selectedIds.length === 0) return null;
@@ -109,6 +110,43 @@ const BulkActionBar: React.FC<BulkActionBarProps> = ({ selectedIds, onClearSelec
                 >
                     <Download size={16} />
                     {isExporting ? 'Esportazione...' : 'Esporta ZIP'}
+                </button>
+
+                <button
+                    onClick={async () => {
+                        if (window.confirm(`Sei sicuro di voler spostare ${selectedIds.length} documenti nel cestino?`)) {
+                            try {
+                                await api.post('/documents/bulk-delete', { document_ids: selectedIds });
+                                onClearSelection();
+                                if (onSuccess) onSuccess();
+                            } catch (err) {
+                                console.error('Bulk delete failed:', err);
+                                alert('Errore durante l\'eliminazione massiva.');
+                            }
+                        }
+                    }}
+                    style={{
+                        display: 'flex', alignItems: 'center', gap: '0.4rem',
+                        background: 'transparent',
+                        color: 'var(--error)',
+                        border: '1px solid var(--error)',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                        padding: '0.5rem 1rem',
+                        borderRadius: '0.375rem',
+                        transition: 'all 0.2s',
+                    }}
+                    onMouseOver={(e) => {
+                        e.currentTarget.style.background = 'var(--error)';
+                        e.currentTarget.style.color = 'var(--bg-dark)';
+                    }}
+                    onMouseOut={(e) => {
+                        e.currentTarget.style.background = 'transparent';
+                        e.currentTarget.style.color = 'var(--error)';
+                    }}
+                >
+                    <Trash2 size={16} />
+                    Elimina
                 </button>
             </div>
         </div>

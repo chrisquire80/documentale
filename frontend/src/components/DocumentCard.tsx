@@ -96,158 +96,98 @@ const DocumentCard: React.FC<{
 
     return (
         <div className="doc-card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                <h3 style={{ margin: 0, fontSize: '1.125rem', paddingRight: '1rem', wordBreak: 'break-word' }}>{doc.title}</h3>
-                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem', gap: '1rem' }}>
+                <h3 style={{
+                    margin: 0,
+                    fontSize: '1.125rem',
+                    fontWeight: 700,
+                    lineHeight: '1.4',
+                    flex: 1,
+                    minWidth: '150px',
+                    wordBreak: 'break-word',
+                    color: 'var(--text-main)'
+                }}>
+                    {doc.title}
+                </h3>
+                <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
                     <button
                         onClick={() => setPreviewOpen(true)}
-                        title="Anteprima in-browser"
-                        style={{
-                            background: 'none',
-                            border: 'none',
-                            cursor: 'pointer',
-                            color: 'var(--accent)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            padding: 0
-                        }}
+                        title="Anteprima"
+                        className="icon-btn"
+                        style={{ color: 'var(--accent)', padding: '0.4rem' }}
                     >
                         <Eye size={20} />
                     </button>
                     <button
-                        onClick={() => setCommentsOpen(true)}
-                        title="Commenti"
-                        style={{
-                            background: 'none',
-                            border: 'none',
-                            cursor: 'pointer',
-                            color: 'var(--text-light)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            padding: 0
-                        }}
-                    >
-                        <MessageSquare size={18} />
-                    </button>
-                    <button
-                        onClick={() => setShareOpen(true)}
-                        title="Condividi Link"
-                        style={{
-                            background: 'none',
-                            border: 'none',
-                            cursor: 'pointer',
-                            color: 'var(--accent)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            padding: 0
-                        }}
-                    >
-                        <Share2 size={18} />
-                    </button>
-                    {canEdit && (
-                        <button
-                            onClick={() => setEditOpen(true)}
-                            title="Modifica Metadati"
-                            style={{
-                                background: 'none',
-                                border: 'none',
-                                cursor: 'pointer',
-                                color: 'var(--text-muted)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                padding: 0
-                            }}
-                        >
-                            <Pencil size={18} />
-                        </button>
-                    )}
-                    {canEdit && (
-                        <button
-                            onClick={() => setUploadVersionOpen(true)}
-                            title="Carica Nuova Versione"
-                            style={{
-                                background: 'none',
-                                border: 'none',
-                                cursor: 'pointer',
-                                color: 'var(--accent)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                padding: 0
-                            }}
-                        >
-                            <UploadIcon size={18} />
-                        </button>
-                    )}
-                    <button
-                        onClick={() => setVersionOpen(true)}
-                        title="Storico Versioni"
-                        style={{
-                            background: 'none',
-                            border: 'none',
-                            cursor: 'pointer',
-                            color: 'var(--text-muted)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            padding: 0
-                        }}
-                    >
-                        <History size={18} />
-                    </button>
-                    <button
-                        onClick={() => setRelatedOpen(true)}
-                        title="Documenti Correlati"
-                        style={{
-                            background: 'none',
-                            border: 'none',
-                            cursor: 'pointer',
-                            color: 'var(--text-muted)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            padding: 0
-                        }}
-                    >
-                        <Link2 size={18} />
-                    </button>
-                    {canEdit && (
-                        <button
-                            onClick={() => {
-                                if (confirm('Sei sicuro di voler spostare questo documento nel cestino?')) {
-                                    softDeleteMutation.mutate(doc.id);
-                                }
-                            }}
-                            disabled={softDeleteMutation.isPending}
-                            title="Sposta nel Cestino"
-                            style={{
-                                background: 'none',
-                                border: 'none',
-                                cursor: softDeleteMutation.isPending ? 'wait' : 'pointer',
-                                color: 'var(--error)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                padding: 0,
-                                opacity: softDeleteMutation.isPending ? 0.5 : 1
-                            }}
-                        >
-                            <Trash2 size={18} />
-                        </button>
-                    )}
-                    <button
                         onClick={handleDownload}
                         disabled={progress !== null}
-                        title={downloadError ? 'Download fallito' : 'Scarica'}
-                        style={{
-                            background: 'none',
-                            border: 'none',
-                            cursor: progress !== null ? 'not-allowed' : 'pointer',
-                            color: downloadError ? 'var(--error)' : 'var(--accent)',
-                            opacity: progress !== null && !downloadError ? 0.55 : 1,
-                            display: 'flex',
-                            alignItems: 'center',
-                        }}
+                        title="Scarica"
+                        className="icon-btn"
+                        style={{ color: downloadError ? 'var(--error)' : 'var(--accent)', padding: '0.4rem' }}
                     >
                         <FileDown size={20} />
                     </button>
+                    {onToggleSelect && (
+                        <div
+                            onClick={(e) => { e.stopPropagation(); onToggleSelect(doc.id); }}
+                            className={`doc-checkbox-inline ${isSelected ? 'selected' : ''}`}
+                            title="Seleziona"
+                            style={{ flexShrink: 0 }}
+                        >
+                            {isSelected && (
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4">
+                                    <polyline points="20 6 9 17 4 12"></polyline>
+                                </svg>
+                            )}
+                        </div>
+                    )}
                 </div>
+            </div>
+
+            {/* Azioni Secondarie - Row dedicata */}
+            <div style={{
+                display: 'flex',
+                gap: '0.4rem',
+                marginBottom: '1rem',
+                padding: '0.5rem',
+                background: 'rgba(0,0,0,0.25)',
+                borderRadius: '0.6rem',
+                flexWrap: 'wrap',
+                border: '1px solid var(--glass)'
+            }}>
+                <button onClick={() => setCommentsOpen(true)} title="Commenti" className="icon-btn">
+                    <MessageSquare size={16} />
+                </button>
+                <button onClick={() => setShareOpen(true)} title="Condividi" className="icon-btn">
+                    <Share2 size={16} />
+                </button>
+                <button onClick={() => setVersionOpen(true)} title="Versioni" className="icon-btn">
+                    <History size={16} />
+                </button>
+                <button onClick={() => setRelatedOpen(true)} title="Correlati" className="icon-btn">
+                    <Link2 size={16} />
+                </button>
+                {canEdit && (
+                    <>
+                        <div style={{ width: '1px', height: '16px', background: 'var(--glass)', margin: '0 0.2rem', alignSelf: 'center' }} />
+                        <button onClick={() => setEditOpen(true)} title="Modifica" className="icon-btn">
+                            <Pencil size={16} />
+                        </button>
+                        <button onClick={() => setUploadVersionOpen(true)} title="Nuova Versione" className="icon-btn">
+                            <UploadIcon size={16} />
+                        </button>
+                        <button
+                            onClick={() => {
+                                if (confirm('Spostare nel cestino?')) softDeleteMutation.mutate(doc.id);
+                            }}
+                            className="icon-btn"
+                            style={{ color: 'var(--error)' }}
+                            title="Cestino"
+                        >
+                            <Trash2 size={16} />
+                        </button>
+                    </>
+                )}
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -303,37 +243,7 @@ const DocumentCard: React.FC<{
                 </p>
             )}
 
-            {/* Checkbox di selezione bulk (floating on top-left) */}
-            {onToggleSelect && (
-                <div
-                    onClick={(e) => { e.stopPropagation(); onToggleSelect(doc.id); }}
-                    style={{
-                        position: 'absolute',
-                        top: '1rem',
-                        left: '-1rem',
-                        width: '28px',
-                        height: '28px',
-                        borderRadius: '6px',
-                        backgroundColor: isSelected ? 'var(--accent)' : 'rgba(0,0,0,0.4)',
-                        border: `2px solid ${isSelected ? 'var(--accent)' : 'var(--glass)'}`,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        cursor: 'pointer',
-                        opacity: isSelected ? 1 : 0,
-                        transition: 'opacity 0.2s, background-color 0.2s',
-                        zIndex: 10,
-                        boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
-                    }}
-                    className="doc-checkbox"
-                >
-                    {isSelected && (
-                        <svg viewBox="0 0 24 24" fill="none" stroke="var(--bg-dark)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ width: '16px', height: '16px' }}>
-                            <polyline points="20 6 9 17 4 12"></polyline>
-                        </svg>
-                    )}
-                </div>
-            )}
+
 
             {previewOpen && (
                 <DocumentPreviewModal

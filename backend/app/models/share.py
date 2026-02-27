@@ -4,8 +4,8 @@ import uuid
 import datetime
 from ..db import Base
 
-class DocumentShare(Base):
-    __tablename__ = "document_shares"
+class DocumentPublicShare(Base):
+    __tablename__ = "document_public_shares"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)

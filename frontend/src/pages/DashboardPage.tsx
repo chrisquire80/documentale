@@ -233,7 +233,7 @@ const DashboardPage: React.FC = () => {
                         ) : (
                             <>
                                 {/* key forces CSS page-enter animation on page/query change */}
-                                <div className="doc-grid" key={`${currentPage}-${debouncedQuery}-${selectedTag}`} style={{ marginTop: '1rem' }}>
+                                <div className="doc-grid" key={`${currentPage}-${debouncedQuery}-${filters.tag}`} style={{ marginTop: '1rem' }}>
                                     {documents.map((doc: any) => (
                                         <DocumentCard
                                             key={doc.id}
@@ -265,6 +265,7 @@ const DashboardPage: React.FC = () => {
             <BulkActionBar
                 selectedIds={selectedDocs}
                 onClearSelection={() => setSelectedDocs([])}
+                onSuccess={refetch}
             />
 
             {isUploadOpen && (

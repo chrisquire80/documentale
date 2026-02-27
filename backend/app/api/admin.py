@@ -7,7 +7,7 @@ from sqlalchemy import select, func, cast, String
 from pydantic import BaseModel
 from uuid import UUID
 
-from ..api.auth import get_current_user, pwd_context
+from ..api.auth import get_current_user
 from ..db import get_db
 from ..models.user import User, UserRole
 from ..models.document import Document
