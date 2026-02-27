@@ -20,6 +20,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5001",
+        "http://127.0.0.1:5001",
         "http://localhost:8000",
     ],
     allow_credentials=True,
@@ -28,12 +30,17 @@ app.add_middleware(
     expose_headers=["Content-Length", "Content-Disposition"],
 )
 
-from .api import auth, documents, admin
+from .api import auth, documents, admin, shares, comments, ws
 from .services import watcher
+from .models.share import DocumentShare
+from .models.comment import DocumentComment
 
 app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(admin.router)
+app.include_router(shares.router)
+app.include_router(comments.router)
+app.include_router(ws.router)
 
 
 @app.on_event("startup")
@@ -43,8 +50,9 @@ async def startup():
     for attempt in range(max_retries):
         try:
             async with engine.begin() as conn:
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
                 await conn.run_sync(Base.metadata.create_all)
-            print("Database: tabelle create/verificate con successo.")
+            print("Database: tabelle create/verificate con successo, pgvector abilitato.")
             break
         except Exception as e:
             if attempt < max_retries - 1:
@@ -90,6 +98,10 @@ async def startup():
 
     # Avvia servizio Watchdog in background
     watcher.start_watcher()
+
+    # Avvia cleanup cestino (background)
+    from .services.trash_cleanup import start_trash_scheduler
+    asyncio.create_task(start_trash_scheduler(interval_hours=24, retention_days=30))
 
 
 @app.on_event("shutdown")

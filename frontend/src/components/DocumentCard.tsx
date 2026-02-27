@@ -1,44 +1,47 @@
 import React, { useState, useCallback } from 'react';
-import { FileDown, Calendar, User, Eye, Pencil, Trash2, Share2, Check, X, Loader } from 'lucide-react';
-import api from '../services/api';
-import PreviewModal from './PreviewModal';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import axios from 'axios';
+import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2 } from 'lucide-react';
+import DocumentPreviewModal from './DocumentPreviewModal';
+import EditMetadataModal from './EditMetadataModal';
+import DocumentVersionModal from './DocumentVersionModal';
 import ShareModal from './ShareModal';
+import CommentsPanel from './CommentsPanel';
+import { useAuth } from '../store/AuthContext';
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:8000';
 
-interface Doc {
-    id: string;
-    title: string;
-    file_type?: string;
-    owner_id: string;
-    is_restricted: boolean;
-    created_at: string;
-    doc_metadata?: { tags?: string[] };
-}
-
-interface Props {
-    doc: Doc;
-    onDeleted?: (id: string) => void;
-    onUpdated?: (doc: Doc) => void;
-}
-
-const DocumentCard: React.FC<Props> = ({ doc, onDeleted, onUpdated }) => {
-    // Download
+const DocumentCard: React.FC<{
+    doc: any;
+    onUpdate?: () => void;
+    isSelected?: boolean;
+    onToggleSelect?: (id: string) => void;
+}> = ({ doc, onUpdate, isSelected = false, onToggleSelect }) => {
+    const { currentUser } = useAuth();
+    const queryClient = useQueryClient();
+    // null = idle | 0-100 = percentage during download
     const [progress, setProgress] = useState<number | null>(null);
     const [downloadError, setDownloadError] = useState(false);
+    const [previewOpen, setPreviewOpen] = useState(false);
+    const [editOpen, setEditOpen] = useState(false);
+    const [shareOpen, setShareOpen] = useState(false);
+    const [commentsOpen, setCommentsOpen] = useState(false);
+    const [versionOpen, setVersionOpen] = useState(false);
 
-    // Modals
-    const [showPreview, setShowPreview] = useState(false);
-    const [showShare, setShowShare] = useState(false);
+    const canEdit = (currentUser?.role as string) === 'ADMIN' || currentUser?.id === doc.owner_id;
 
-    // Inline edit
-    const [editing, setEditing] = useState(false);
-    const [editTitle, setEditTitle] = useState(doc.title);
-    const [editRestricted, setEditRestricted] = useState(doc.is_restricted);
-    const [saving, setSaving] = useState(false);
-
-    // Delete
-    const [deleting, setDeleting] = useState(false);
+    const softDeleteMutation = useMutation({
+        mutationFn: (docId: string) => {
+            const token = localStorage.getItem('token');
+            return axios.delete(`${BASE_URL}/api/documents/${docId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['documents'] });
+            if (onUpdate) onUpdate();
+        }
+    });
 
     // ── Download ──────────────────────────────────────────────────────────────
     const handleDownload = useCallback(async () => {
@@ -54,7 +57,7 @@ const DocumentCard: React.FC<Props> = ({ doc, onDeleted, onUpdated }) => {
             const contentLength = response.headers.get('Content-Length');
             const total = contentLength ? parseInt(contentLength, 10) : 0;
             const reader = response.body!.getReader();
-            const chunks: Uint8Array[] = [];
+            const chunks: any[] = [];
             let received = 0;
 
             while (true) {
@@ -87,164 +90,242 @@ const DocumentCard: React.FC<Props> = ({ doc, onDeleted, onUpdated }) => {
         }
     }, [doc.id, doc.title]);
 
-    // ── Inline edit ──────────────────────────────────────────────────────────
-    const handleEditSave = async () => {
-        if (!editTitle.trim()) return;
-        setSaving(true);
-        try {
-            const res = await api.patch(`/documents/${doc.id}`, {
-                title: editTitle.trim(),
-                is_restricted: editRestricted,
-            });
-            onUpdated?.(res.data);
-            setEditing(false);
-        } catch {
-            // silenzioso — mantieni la modalità edit
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const handleEditCancel = () => {
-        setEditTitle(doc.title);
-        setEditRestricted(doc.is_restricted);
-        setEditing(false);
-    };
-
-    // ── Soft delete ──────────────────────────────────────────────────────────
-    const handleDelete = async () => {
-        if (!window.confirm(`Spostare "${doc.title}" nel cestino?`)) return;
-        setDeleting(true);
-        try {
-            await api.delete(`/documents/${doc.id}`);
-            onDeleted?.(doc.id);
-        } finally {
-            setDeleting(false);
-        }
-    };
-
     return (
-        <>
-            <div className="doc-card">
-                {/* ── Header ── */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem', gap: '0.5rem' }}>
-                    {editing ? (
-                        <input
-                            className="input"
-                            style={{ marginBottom: 0, fontSize: '1rem', flex: 1 }}
-                            value={editTitle}
-                            onChange={(e) => setEditTitle(e.target.value)}
-                            autoFocus
-                        />
-                    ) : (
-                        <h3 style={{ margin: 0, fontSize: '1.05rem', flex: 1, wordBreak: 'break-word' }}>{doc.title}</h3>
+        <div className="doc-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                <h3 style={{ margin: 0, fontSize: '1.125rem', paddingRight: '1rem', wordBreak: 'break-word' }}>{doc.title}</h3>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+                    <button
+                        onClick={() => setPreviewOpen(true)}
+                        title="Anteprima in-browser"
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: 'var(--accent)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: 0
+                        }}
+                    >
+                        <Eye size={20} />
+                    </button>
+                    <button
+                        onClick={() => setCommentsOpen(true)}
+                        title="Commenti"
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: 'var(--text-light)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: 0
+                        }}
+                    >
+                        <MessageSquare size={18} />
+                    </button>
+                    <button
+                        onClick={() => setShareOpen(true)}
+                        title="Condividi Link"
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: 'var(--accent)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: 0
+                        }}
+                    >
+                        <Share2 size={18} />
+                    </button>
+                    {canEdit && (
+                        <button
+                            onClick={() => setEditOpen(true)}
+                            title="Modifica Metadati"
+                            style={{
+                                background: 'none',
+                                border: 'none',
+                                cursor: 'pointer',
+                                color: 'var(--text-muted)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                padding: 0
+                            }}
+                        >
+                            <Pencil size={18} />
+                        </button>
                     )}
-
-                    {/* Azioni */}
-                    <div style={{ display: 'flex', gap: '0.25rem', flexShrink: 0 }}>
-                        {editing ? (
-                            <>
-                                <button className="icon-btn" style={{ color: '#22c55e' }} onClick={handleEditSave} disabled={saving} title="Salva">
-                                    {saving ? <Loader size={16} className="spin" /> : <Check size={16} />}
-                                </button>
-                                <button className="icon-btn" style={{ color: 'var(--error)' }} onClick={handleEditCancel} title="Annulla">
-                                    <X size={16} />
-                                </button>
-                            </>
-                        ) : (
-                            <>
-                                <button className="icon-btn" onClick={() => setShowPreview(true)} title="Anteprima">
-                                    <Eye size={16} />
-                                </button>
-                                <button className="icon-btn" onClick={() => setEditing(true)} title="Modifica">
-                                    <Pencil size={16} />
-                                </button>
-                                <button className="icon-btn" onClick={() => setShowShare(true)} title="Condividi">
-                                    <Share2 size={16} />
-                                </button>
-                                <button
-                                    className="icon-btn"
-                                    onClick={handleDownload}
-                                    disabled={progress !== null}
-                                    title={downloadError ? 'Download fallito' : 'Scarica'}
-                                    style={{ color: downloadError ? 'var(--error)' : 'var(--accent)' }}
-                                >
-                                    <FileDown size={16} />
-                                </button>
-                                <button
-                                    className="icon-btn"
-                                    onClick={handleDelete}
-                                    disabled={deleting}
-                                    title="Elimina"
-                                    style={{ color: 'var(--error)' }}
-                                >
-                                    {deleting ? <Loader size={16} className="spin" /> : <Trash2 size={16} />}
-                                </button>
-                            </>
-                        )}
-                    </div>
-                </div>
-
-                {/* Inline edit: campo is_restricted */}
-                {editing && (
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', marginBottom: '0.75rem', cursor: 'pointer' }}>
-                        <input
-                            type="checkbox"
-                            checked={editRestricted}
-                            onChange={(e) => setEditRestricted(e.target.checked)}
-                        />
-                        Documento riservato
-                    </label>
-                )}
-
-                {/* ── Meta ── */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                        <Calendar size={13} />
-                        {new Date(doc.created_at).toLocaleDateString('it-IT')}
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                        <User size={13} />
-                        {String(doc.owner_id).slice(0, 8)}…
-                    </div>
-                    {doc.is_restricted && (
-                        <span style={{ fontSize: '0.7rem', background: 'rgba(239,68,68,0.2)', color: '#fca5a5', padding: '0.15rem 0.4rem', borderRadius: '0.25rem', alignSelf: 'flex-start' }}>
-                            Riservato
-                        </span>
+                    <button
+                        onClick={() => setVersionOpen(true)}
+                        title="Storico Versioni"
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: 'var(--text-muted)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: 0
+                        }}
+                    >
+                        <History size={18} />
+                    </button>
+                    {canEdit && (
+                        <button
+                            onClick={() => {
+                                if (confirm('Sei sicuro di voler spostare questo documento nel cestino?')) {
+                                    softDeleteMutation.mutate(doc.id);
+                                }
+                            }}
+                            disabled={softDeleteMutation.isPending}
+                            title="Sposta nel Cestino"
+                            style={{
+                                background: 'none',
+                                border: 'none',
+                                cursor: softDeleteMutation.isPending ? 'wait' : 'pointer',
+                                color: 'var(--error)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                padding: 0,
+                                opacity: softDeleteMutation.isPending ? 0.5 : 1
+                            }}
+                        >
+                            <Trash2 size={18} />
+                        </button>
                     )}
+                    <button
+                        onClick={handleDownload}
+                        disabled={progress !== null}
+                        title={downloadError ? 'Download fallito' : 'Scarica'}
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: progress !== null ? 'not-allowed' : 'pointer',
+                            color: downloadError ? 'var(--error)' : 'var(--accent)',
+                            opacity: progress !== null && !downloadError ? 0.55 : 1,
+                            display: 'flex',
+                            alignItems: 'center',
+                        }}
+                    >
+                        <FileDown size={20} />
+                    </button>
                 </div>
-
-                {/* ── Tag ── */}
-                {(doc.doc_metadata?.tags?.length ?? 0) > 0 && (
-                    <div style={{ marginTop: '0.75rem', display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-                        {doc.doc_metadata!.tags!.map((tag) => (
-                            <span
-                                key={tag}
-                                style={{ background: 'var(--primary)', padding: '0.15rem 0.45rem', borderRadius: '0.25rem', fontSize: '0.72rem' }}
-                            >
-                                {tag}
-                            </span>
-                        ))}
-                    </div>
-                )}
-
-                {/* ── Download progress ── */}
-                {progress !== null && (
-                    <div className="download-progress-bar">
-                        <div
-                            className={`download-progress-fill${downloadError ? ' download-progress-error' : ''}`}
-                            style={{ width: downloadError ? '100%' : `${progress}%` }}
-                        />
-                    </div>
-                )}
-                {downloadError && (
-                    <p style={{ margin: '0.25rem 0 0', fontSize: '0.72rem', color: 'var(--error)' }}>Download fallito. Riprova.</p>
-                )}
             </div>
 
-            {showPreview && <PreviewModal doc={doc} onClose={() => setShowPreview(false)} />}
-            {showShare && <ShareModal doc={doc} onClose={() => setShowShare(false)} />}
-        </>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+                    <Calendar size={14} />
+                    {new Date(doc.created_at).toLocaleDateString('it-IT')}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+                    <UserIcon size={14} />
+                    {String(doc.owner_id).slice(0, 8)}…
+                </div>
+            </div>
+
+            <div style={{ marginTop: '1rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                {doc.doc_metadata?.tags?.map((tag: string) => (
+                    <span
+                        key={tag}
+                        style={{ background: 'var(--primary)', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.75rem' }}
+                    >
+                        {tag}
+                    </span>
+                ))}
+            </div>
+
+            {/* Streaming download progress bar */}
+            {progress !== null && (
+                <div className="download-progress-bar">
+                    <div
+                        className={`download-progress-fill${downloadError ? ' download-progress-error' : ''}`}
+                        style={{ width: downloadError ? '100%' : `${progress}%` }}
+                    />
+                </div>
+            )}
+            {downloadError && (
+                <p style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', color: 'var(--error)' }}>
+                    Download fallito. Riprova.
+                </p>
+            )}
+
+            {/* Checkbox di selezione bulk (floating on top-left) */}
+            {onToggleSelect && (
+                <div
+                    onClick={(e) => { e.stopPropagation(); onToggleSelect(doc.id); }}
+                    style={{
+                        position: 'absolute',
+                        top: '1rem',
+                        left: '-1rem',
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '6px',
+                        backgroundColor: isSelected ? 'var(--accent)' : 'rgba(0,0,0,0.4)',
+                        border: `2px solid ${isSelected ? 'var(--accent)' : 'var(--glass)'}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        opacity: isSelected ? 1 : 0,
+                        transition: 'opacity 0.2s, background-color 0.2s',
+                        zIndex: 10,
+                        boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
+                    }}
+                    className="doc-checkbox"
+                >
+                    {isSelected && (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="var(--bg-dark)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ width: '16px', height: '16px' }}>
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                    )}
+                </div>
+            )}
+
+            {previewOpen && (
+                <DocumentPreviewModal
+                    isOpen={previewOpen}
+                    onClose={() => setPreviewOpen(false)}
+                    doc={doc}
+                />
+            )}
+
+            {editOpen && (
+                <EditMetadataModal
+                    isOpen={editOpen}
+                    onClose={() => setEditOpen(false)}
+                    doc={doc}
+                    onSaveSuccess={() => {
+                        if (onUpdate) onUpdate();
+                    }}
+                />
+            )}
+
+            {shareOpen && (
+                <ShareModal
+                    docId={doc.id}
+                    fileName={doc.title}
+                    onClose={() => setShareOpen(false)}
+                />
+            )}
+
+            {commentsOpen && (
+                <CommentsPanel
+                    docId={doc.id}
+                    docTitle={doc.title}
+                    onClose={() => setCommentsOpen(false)}
+                />
+            )}
+
+            {versionOpen && (
+                <DocumentVersionModal
+                    isOpen={versionOpen}
+                    onClose={() => setVersionOpen(false)}
+                    doc={doc}
+                />
+            )}
+        </div>
     );
 };
 

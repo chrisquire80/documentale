@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './store/AuthContext';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
+import PublicDownloadPage from './pages/PublicDownloadPage';
+import TrashPage from './pages/TrashPage';
 
 const queryClient = new QueryClient();
 
@@ -20,11 +22,20 @@ const AppContent: React.FC = () => {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/shared/:token" element={<PublicDownloadPage />} />
       <Route
         path="/"
         element={
           <ProtectedRoute>
             <DashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/trash"
+        element={
+          <ProtectedRoute>
+            <TrashPage />
           </ProtectedRoute>
         }
       />

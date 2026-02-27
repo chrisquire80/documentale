@@ -1,138 +1,169 @@
-import React, { useEffect, useState } from 'react';
-import { X, Share2, Trash2, Loader } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Copy, Check, Link as LinkIcon } from 'lucide-react';
+import api from '../services/api';
 
-const BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:8000';
-
-interface Share {
-    id: string;
-    shared_with_id: string;
-    created_at: string;
-}
-
-interface Props {
-    doc: { id: string; title: string };
+interface ShareModalProps {
+    docId: string;
+    fileName: string;
     onClose: () => void;
 }
 
-const ShareModal: React.FC<Props> = ({ doc, onClose }) => {
-    const [email, setEmail] = useState('');
-    const [shares, setShares] = useState<Share[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [error, setError] = useState('');
-    const [success, setSuccess] = useState('');
+const ShareModal: React.FC<ShareModalProps> = ({ docId, fileName, onClose }) => {
+    const [passkey, setPasskey] = useState('');
+    const [expiresAt, setExpiresAt] = useState('');
+    const [generatedLink, setGeneratedLink] = useState<string | null>(null);
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [isCopied, setIsCopied] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-    const token = localStorage.getItem('token');
-    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-
-    const fetchShares = async () => {
-        try {
-            const res = await fetch(`${BASE_URL}/documents/${doc.id}/shares`, { headers });
-            if (res.ok) setShares(await res.json());
-        } catch {
-            // silenzioso
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    useEffect(() => { fetchShares(); }, [doc.id]);
-
-    const handleShare = async (e: React.FormEvent) => {
+    const handleGenerate = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!email.trim()) return;
-        setSaving(true);
-        setError('');
-        setSuccess('');
+        setIsGenerating(true);
+        setError(null);
+
         try {
-            const res = await fetch(`${BASE_URL}/documents/${doc.id}/share`, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({ shared_with_email: email.trim() }),
-            });
-            const data = await res.json();
-            if (!res.ok) {
-                setError(data.detail || 'Errore durante la condivisione.');
-            } else {
-                setSuccess(`Documento condiviso con ${email.trim()}.`);
-                setEmail('');
-                await fetchShares();
+            const payload: any = {};
+            if (passkey.trim()) payload.passkey = passkey.trim();
+            if (expiresAt) {
+                const dateObj = new Date(expiresAt);
+                payload.expires_at = dateObj.toISOString();
             }
-        } catch {
-            setError('Errore di rete.');
+
+            const response = await api.post(`/documents/${docId}/share`, payload);
+
+            const url = new URL(window.location.href);
+            const shareUrl = `${url.protocol}//${url.host}/shared/${response.data.token}`;
+            setGeneratedLink(shareUrl);
+        } catch (err: any) {
+            console.error('Share error:', err);
+            setError(err.response?.data?.detail || 'Errore durante la generazione del link.');
         } finally {
-            setSaving(false);
+            setIsGenerating(false);
         }
     };
 
-    const handleRevoke = async (shareId: string) => {
-        try {
-            await fetch(`${BASE_URL}/documents/${doc.id}/shares/${shareId}`, {
-                method: 'DELETE',
-                headers,
-            });
-            setShares((prev) => prev.filter((s) => s.id !== shareId));
-        } catch {
-            // silenzioso
+    const handleCopy = () => {
+        if (generatedLink) {
+            navigator.clipboard.writeText(generatedLink);
+            setIsCopied(true);
+            setTimeout(() => setIsCopied(false), 2000);
         }
     };
 
     return (
         <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: '480px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                    <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <Share2 size={18} /> Condividi
-                    </h2>
-                    <button className="icon-btn" onClick={onClose}><X size={20} /></button>
+            <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+                <div className="modal-header">
+                    <h2>Condividi Documento</h2>
+                    <button className="close-btn" onClick={onClose}><X size={24} /></button>
                 </div>
 
-                <p style={{ color: 'var(--text-muted)', marginBottom: '1rem', fontSize: '0.875rem' }}>
-                    <strong>{doc.title}</strong>
-                </p>
+                {!generatedLink ? (
+                    <form onSubmit={handleGenerate} className="modal-form">
+                        <p style={{ marginBottom: '1rem', color: 'var(--text-muted)' }}>
+                            Crea un link pubblico per <strong>{fileName}</strong>.
+                        </p>
 
-                <form onSubmit={handleShare}>
-                    <label className="filter-label">Email utente</label>
-                    <input
-                        type="email"
-                        className="input"
-                        placeholder="utente@esempio.it"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        required
-                    />
-                    {error && <p style={{ color: 'var(--error)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>{error}</p>}
-                    {success && <p style={{ color: '#22c55e', fontSize: '0.85rem', marginBottom: '0.5rem' }}>{success}</p>}
-                    <button className="btn" type="submit" disabled={saving} style={{ width: 'auto', marginBottom: '1.5rem' }}>
-                        {saving ? <Loader size={16} className="spin" /> : 'Condividi'}
-                    </button>
-                </form>
+                        <div className="form-group">
+                            <label htmlFor="passkey">Password di protezione (opzionale)</label>
+                            <input
+                                id="passkey"
+                                type="password"
+                                value={passkey}
+                                onChange={e => setPasskey(e.target.value)}
+                                placeholder="Lascia vuoto per renderlo pubblico"
+                                style={{
+                                    width: '100%',
+                                    padding: '0.75rem',
+                                    borderRadius: '0.375rem',
+                                    border: '1px solid var(--border)',
+                                    backgroundColor: 'var(--bg-dark)',
+                                    color: 'var(--text-light)',
+                                    marginBottom: '1rem'
+                                }}
+                            />
+                        </div>
 
-                <hr style={{ borderColor: 'var(--glass)', marginBottom: '1rem' }} />
-                <p style={{ fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.875rem' }}>Condivisioni attive</p>
+                        <div className="form-group">
+                            <label htmlFor="expiresAt">Data di Scadenza (opzionale)</label>
+                            <input
+                                id="expiresAt"
+                                type="datetime-local"
+                                value={expiresAt}
+                                onChange={e => setExpiresAt(e.target.value)}
+                                style={{
+                                    width: '100%',
+                                    padding: '0.75rem',
+                                    borderRadius: '0.375rem',
+                                    border: '1px solid var(--border)',
+                                    backgroundColor: 'var(--bg-dark)',
+                                    color: 'var(--text-light)'
+                                }}
+                            />
+                        </div>
 
-                {loading ? (
-                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Caricamento…</p>
-                ) : shares.length === 0 ? (
-                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Nessuna condivisione attiva.</p>
+                        {error && <div className="error-message" style={{ color: 'var(--error)', marginTop: '0.5rem' }}>{error}</div>}
+
+                        <div className="modal-actions" style={{ marginTop: '1.5rem' }}>
+                            <button type="button" className="btn btn-secondary" onClick={onClose}>Annulla</button>
+                            <button type="submit" className="btn btn-primary" disabled={isGenerating}>
+                                {isGenerating ? 'Creazione...' : 'Genera Link'}
+                            </button>
+                        </div>
+                    </form>
                 ) : (
-                    <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                        {shares.map((s) => (
-                            <li key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--glass)', borderRadius: '0.4rem', padding: '0.5rem 0.75rem' }}>
-                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                                    ID: {s.shared_with_id.slice(0, 8)}… · {new Date(s.created_at).toLocaleDateString('it-IT')}
-                                </span>
-                                <button
-                                    className="icon-btn"
-                                    style={{ color: 'var(--error)' }}
-                                    onClick={() => handleRevoke(s.id)}
-                                    title="Revoca accesso"
-                                >
-                                    <Trash2 size={14} />
-                                </button>
-                            </li>
-                        ))}
-                    </ul>
+                    <div style={{ padding: '1rem 0' }}>
+                        <div style={{ textAlign: 'center', marginBottom: '1.5rem', color: 'var(--accent)' }}>
+                            <LinkIcon size={48} style={{ marginBottom: '1rem' }} />
+                            <h3 style={{ margin: 0, color: 'var(--text-light)' }}>Link generato!</h3>
+                        </div>
+
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            backgroundColor: 'var(--bg-dark)',
+                            padding: '0.5rem',
+                            borderRadius: '0.375rem',
+                            border: '1px solid var(--border)'
+                        }}>
+                            <input
+                                type="text"
+                                readOnly
+                                value={generatedLink}
+                                style={{
+                                    flex: 1,
+                                    background: 'transparent',
+                                    border: 'none',
+                                    color: 'var(--text-light)',
+                                    fontSize: '0.9rem',
+                                    outline: 'none',
+                                    textOverflow: 'ellipsis'
+                                }}
+                            />
+                            <button
+                                onClick={handleCopy}
+                                style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    padding: '0.5rem',
+                                    backgroundColor: 'var(--accent)',
+                                    color: 'var(--bg-dark)',
+                                    border: 'none',
+                                    borderRadius: '0.25rem',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                {isCopied ? <Check size={18} /> : <Copy size={18} />}
+                            </button>
+                        </div>
+                        <p style={{ marginTop: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+                            Chiunque abbia questo link {passkey ? 'e la password ' : ''}potrà scaricare il documento.
+                        </p>
+
+                        <div className="modal-actions" style={{ marginTop: '1.5rem', justifyContent: 'center' }}>
+                            <button className="btn btn-primary" onClick={onClose}>Chiudi</button>
+                        </div>
+                    </div>
                 )}
             </div>
         </div>

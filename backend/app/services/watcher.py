@@ -14,8 +14,11 @@ from ..db import SessionLocal
 from ..models.user import User
 from ..models.document import Document, DocumentVersion, DocumentMetadata, DocumentContent
 from ..models.audit import AuditLog
-from ..core.storage import LocalStorage, settings
+from ..core.storage import LocalStorage
+from ..core.config import settings
 from ..services.ocr import extract_text as ocr_extract_text
+from ..services.llm_metadata import extract_metadata_from_text
+from ..services.embeddings import generate_embedding
 from sqlalchemy import select
 
 # Mappa estensione → MIME type per l'OCR
@@ -27,10 +30,6 @@ _EXT_MIME = {
     '.png':  'image/png',
 }
 
-WATCH_DIR = "/app/auto_ingest"
-ALLOWED_EXTENSIONS = {'.pdf', '.doc', '.docx', '.txt', '.jpg', '.jpeg', '.png'}
-AUTO_USER_EMAIL = "admin@example.com" # Fallback owner per auto-ingest
-
 class AutoIngestHandler(FileSystemEventHandler):
     def __init__(self, loop):
         self.loop = loop
@@ -40,13 +39,13 @@ class AutoIngestHandler(FileSystemEventHandler):
         if not event.is_directory:
             file_path = event.src_path
             ext = os.path.splitext(file_path)[1].lower()
-            if ext in ALLOWED_EXTENSIONS:
+            if ext in settings.ALLOWED_EXTENSIONS:
                 print(f"Watchdog: Detected new file {file_path}. Scheduling ingestion...")
                 # Schedule the async ingestion task
                 asyncio.run_coroutine_threadsafe(self.process_file(file_path), self.loop)
 
     async def get_system_user(self, db: AsyncSession):
-        stmt = select(User).where(User.email == AUTO_USER_EMAIL)
+        stmt = select(User).where(User.email == settings.AUTO_USER_EMAIL)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -69,7 +68,7 @@ class AutoIngestHandler(FileSystemEventHandler):
             try:
                 system_user = await self.get_system_user(db)
                 if not system_user:
-                    print("Watchdog Error: System user admin@example.com not found. Cannot assign document.")
+                    print(f"Watchdog Error: System user {settings.AUTO_USER_EMAIL} not found. Cannot assign document.")
                     return
 
                 # Read file into memory to pass to storage (simulating UploadFile behavior)
@@ -113,6 +112,24 @@ class AutoIngestHandler(FileSystemEventHandler):
                     fulltext_content=corpus,
                 )
                 db.add(doc_content)
+                
+                # 5.5 Auto-tagging con Gemini
+                ai_metadata = await extract_metadata_from_text(corpus)
+                if ai_metadata:
+                    current_json = meta.metadata_json
+                    existing_tags = set(current_json.get("tags", []))
+                    ai_tags = set(ai_metadata.get("tags", []))
+                    current_json["tags"] = list(existing_tags.union(ai_tags))
+                    
+                    if ai_metadata.get("department") and ai_metadata["department"] != "Generale":
+                        current_json["dept"] = ai_metadata["department"]
+                        
+                    meta.metadata_json = dict(current_json)
+
+                # 5.6 Semantic Embeddings
+                ai_embedding = await generate_embedding(corpus)
+                if ai_embedding:
+                    doc_content.embedding = ai_embedding
 
                 # 6. Audit log
                 audit = AuditLog(user_id=system_user.id, action="AUTO_UPLOAD", target_id=doc.id, details="Ingested by Documentale Watchdog")
@@ -135,17 +152,17 @@ observer = None
 
 def start_watcher():
     global observer
-    if not os.path.exists(WATCH_DIR):
-        os.makedirs(WATCH_DIR, exist_ok=True)
+    if not os.path.exists(settings.WATCH_DIR):
+        os.makedirs(settings.WATCH_DIR, exist_ok=True)
         
     loop = asyncio.get_running_loop()
     event_handler = AutoIngestHandler(loop)
     
     # We use PollingObserver because standard inotify doesn't work well across Windows->WSL->Docker volume boundaries
     observer = PollingObserver()
-    observer.schedule(event_handler, WATCH_DIR, recursive=False)
+    observer.schedule(event_handler, settings.WATCH_DIR, recursive=False)
     observer.start()
-    print(f"Watchdog: Started monitoring {WATCH_DIR}")
+    print(f"Watchdog: Started monitoring {settings.WATCH_DIR}")
 
 def stop_watcher():
     global observer

@@ -131,3 +131,5 @@ async def _extract_image(path: str) -> str:
         return pytesseract.image_to_string(img, lang="ita").strip()
 
     return await asyncio.get_event_loop().run_in_executor(None, _sync)
+
+

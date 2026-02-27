@@ -1,0 +1,137 @@
+.dashboard-stats-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+}
+
+.dashboard-stats-modal {
+    margin: 0;
+    position: relative;
+    width: 100%;
+    max-width: 600px;
+    padding: 2rem;
+}
+
+.stats-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+
+.stats-title {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1.25rem;
+}
+
+.stats-close-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    display: flex;
+}
+
+.stats-loading {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 3rem 0;
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.stats-error {
+    color: var(--error);
+    text-align: center;
+    padding: 1.5rem;
+    background: rgba(239, 68, 68, 0.08);
+    border-radius: 0.5rem;
+}
+
+.stats-content-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.stats-grid-kpi {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.stat-box {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    background: rgba(255, 255, 255, 0.02);
+    padding: 1rem;
+    border-radius: 0.75rem;
+    border: 1px solid var(--glass);
+}
+
+.stat-box-icon {
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+}
+
+.stat-box-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 0.25rem;
+}
+
+.stat-box-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.stats-tags-title {
+    font-size: 1rem;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.stats-tags-none {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.stats-tags-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.stats-tag-badge {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--glass);
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.stats-tag-label {
+    font-weight: 500;
+    color: var(--text-main);
+}
+
+.stats-tag-count {
+    background: var(--primary);
+    padding: 0.15rem 0.4rem;
+    border-radius: 1rem;
+    font-size: 0.75rem;
+    color: white;
+}

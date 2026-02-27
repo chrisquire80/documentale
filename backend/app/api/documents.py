@@ -1,3 +1,4 @@
+import asyncio
 import json
 import hashlib
 import logging
@@ -8,18 +9,21 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Form, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update as sa_update, delete as sa_delete, or_, and_, distinct, func
+from sqlalchemy import select, update as sa_update, delete as sa_delete, or_, and_, distinct, func, cast
 from sqlalchemy.orm import selectinload
+import asyncio
 from typing import List, Optional
 from uuid import UUID
+from datetime import datetime
 
 from ..db import get_db, SessionLocal
 from ..models.user import User, UserRole
 from ..models.document import Document, DocumentVersion, DocumentMetadata, DocumentContent, DocumentShare
 from ..models.audit import AuditLog
+from pgvector.sqlalchemy import Vector
 from ..schemas.doc_schemas import (
-    DocumentResponse, DocumentVersionResponse, PaginatedDocuments,
-    DocumentUpdate, DocumentShareCreate, DocumentShareResponse,
+    DocumentResponse, DocumentCreate, DocumentVersionResponse, PaginatedDocuments,
+    DocumentUpdate, BulkExportRequest, DocumentShareCreate, DocumentShareResponse,
 )
 from ..api.auth import get_current_user
 from ..core.storage import get_storage, StorageLayer, LocalStorage
@@ -81,9 +85,15 @@ async def _run_ocr_background(
     file_rel_path: str,
     content_type: str,
     initial_corpus: str,
+    run_llm: bool = True,
 ) -> None:
+    """
+    Eseguito dopo la risposta HTTP: estrae il testo dal file via OCR
+    e aggiorna DocumentContent.fulltext_content. Se run_llm è True, analizza con Gemini.
+    """
     from ..services.ocr import extract_text
-    from ..services.gemini_tagger import suggest_tags
+    from ..services.llm_metadata import extract_metadata_from_text
+    from ..services.embeddings import generate_embedding
 
     storage = LocalStorage()
     abs_path = await storage.get_file_path(file_rel_path)
@@ -91,42 +101,45 @@ async def _run_ocr_background(
     ocr_text = await extract_text(abs_path, content_type)
     merged = f"{initial_corpus} {ocr_text}".strip() if ocr_text else initial_corpus
 
-    # Auto-tagging Gemini (graceful degradation — mai blocca)
-    async with SessionLocal() as db:
-        try:
-            doc = (await db.execute(select(Document).where(Document.id == doc_id))).scalar_one_or_none()
-            title = doc.title if doc else ""
-        except Exception:
-            title = ""
+    merged = f"{initial_corpus} {ocr_text}".strip()
 
-    tags = await suggest_tags(merged, title)
+    ai_metadata = None
+    ai_embedding = None
+    if run_llm:
+        ai_metadata = await extract_metadata_from_text(merged)
+        ai_embedding = await generate_embedding(merged)
 
     async with SessionLocal() as db:
         try:
-            await db.execute(
+            update_values = {"fulltext_content": merged}
+            if ai_embedding is not None:
+                update_values["embedding"] = ai_embedding
+
+            stmt = (
                 sa_update(DocumentContent)
                 .where(DocumentContent.document_id == doc_id)
-                .values(fulltext_content=merged)
+                .values(**update_values)
             )
+            await db.execute(stmt)
 
-            if tags:
-                meta = (
-                    await db.execute(
-                        select(DocumentMetadata).where(DocumentMetadata.document_id == doc_id)
-                    )
-                ).scalar_one_or_none()
+            if ai_metadata:
+                meta_stmt = select(DocumentMetadata).where(DocumentMetadata.document_id == doc_id)
+                meta = (await db.execute(meta_stmt)).scalar_one_or_none()
                 if meta:
-                    existing = dict(meta.metadata_json or {})
-                    existing["tags"] = list(dict.fromkeys(existing.get("tags", []) + tags))
-                    existing["ai_tags"] = tags
-                    await db.execute(
-                        sa_update(DocumentMetadata)
-                        .where(DocumentMetadata.document_id == doc_id)
-                        .values(metadata_json=existing)
-                    )
+                    current_json = meta.metadata_json or {}
+
+                    existing_tags = set(current_json.get("tags", []))
+                    ai_tags = set(ai_metadata.get("tags", []))
+                    current_json["tags"] = list(existing_tags.union(ai_tags))
+
+                    if not current_json.get("dept") and ai_metadata.get("department"):
+                        if ai_metadata["department"] != "Generale":
+                            current_json["dept"] = ai_metadata["department"]
+
+                    meta.metadata_json = dict(current_json)
 
             await db.commit()
-            logger.info("OCR+tag completati per documento %s (%d chars).", doc_id, len(merged))
+            logger.info("OCR/LLM completata per documento %s (%d chars).", doc_id, len(merged))
         except Exception as exc:
             await db.rollback()
             logger.warning("Background OCR/tag fallito per %s: %s", doc_id, exc)
@@ -198,6 +211,92 @@ async def upload_document(
     return doc
 
 
+# ── Update ────────────────────────────────────────────────────────────────────
+
+@router.patch("/{doc_id}", response_model=DocumentResponse)
+async def update_document(
+    doc_id: UUID,
+    update_data: DocumentUpdate,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
+):
+    stmt = select(Document).options(selectinload(Document.metadata_entries)).where(Document.id == doc_id, Document.deleted_at.is_(None))
+    doc = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found or in trash")
+
+    if current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    # Update base fields
+    if update_data.title is not None:
+        doc.title = update_data.title
+    if update_data.is_restricted is not None:
+        doc.is_restricted = update_data.is_restricted
+
+    # Update metadata
+    if update_data.doc_metadata is not None:
+        if doc.metadata_entries:
+            doc.metadata_entries[0].metadata_json = update_data.doc_metadata
+        else:
+            new_meta = DocumentMetadata(document_id=doc.id, metadata_json=update_data.doc_metadata)
+            db.add(new_meta)
+
+    # Recompute base corpus for FTS if title or metadata changed
+    if update_data.title is not None or update_data.doc_metadata is not None:
+        meta_dict = update_data.doc_metadata if update_data.doc_metadata is not None else (doc.metadata_entries[0].metadata_json if doc.metadata_entries else {})
+        tags_text = " ".join(meta_dict.get("tags", []))
+        author_text = meta_dict.get("author", "")
+        dept_text = meta_dict.get("dept", "")
+        
+        initial_corpus = " ".join(filter(None, [doc.title, author_text, dept_text, tags_text]))
+        
+        # We need the file_path to rerun OCR
+        v_stmt = select(DocumentVersion).where(DocumentVersion.document_id == doc_id, DocumentVersion.version_num == doc.current_version)
+        ver = (await db.execute(v_stmt)).scalar_one_or_none()
+        
+        if ver:
+            # We must schedule OCR again so it appends to the new initial corpus, 
+            # because previous OCR text is mixed into the DB row and we can't easily extract it.
+            # Rerunning OCR ensures consistency.
+            import mimetypes
+            # Try to guess mime type from file path
+            mime_type, _ = mimetypes.guess_type(ver.file_path)
+            mime_type = mime_type or "application/octet-stream"
+            
+            background_tasks.add_task(
+                _run_ocr_background,
+                doc.id,
+                ver.file_path,
+                mime_type,
+                initial_corpus,
+                run_llm=False
+            )
+            
+            # Temporary set the corpus to just the metadata until OCR finishes, or just wait.
+            # The background task will OVERWRITE the DocumentContent.fulltext_content.
+
+    # Audit log
+    audit = AuditLog(user_id=current_user.id, action="UPDATE", target_id=doc.id)
+    db.add(audit)
+
+    await db.commit()
+    await db.refresh(doc, ["metadata_entries", "owner"])
+
+    # Invalidate search cache
+    if redis:
+        try:
+            async for key in redis.scan_iter(f"docs:{current_user.id}:*"):
+                await redis.delete(key)
+        except Exception:
+            pass
+
+    return doc
+
+
 # ── Search ────────────────────────────────────────────────────────────────────
 
 @router.get("/search", response_model=PaginatedDocuments)
@@ -229,7 +328,7 @@ async def search_documents(
         except Exception:
             pass
 
-    filters = [Document.is_deleted == False]
+    filters = [Document.deleted_at.is_(None)]
     need_content_join = False
     need_meta_join = False
 
@@ -250,11 +349,22 @@ async def search_documents(
 
     if query:
         need_content_join = True
-        fts_cond = and_(
+
+        # Genera embedding per la query
+        from ..services.embeddings import generate_query_embedding
+        query_emb = await generate_query_embedding(query)
+
+        fts_condition = and_(
             DocumentContent.search_vector.isnot(None),
             DocumentContent.search_vector.op("@@")(func.plainto_tsquery("italian", query)),
         )
-        filters.append(or_(fts_cond, Document.title.ilike(f"%{query}%")))
+
+        if query_emb:
+            # Distanza coseno < 0.65 equivale a similarità > 0.35 (buono per Gemini)
+            semantic_condition = DocumentContent.embedding.cosine_distance(cast(query_emb, Vector)) < 0.65
+            filters.append(or_(fts_condition, Document.title.ilike(f"%{query}%"), semantic_condition))
+        else:
+            filters.append(or_(fts_condition, Document.title.ilike(f"%{query}%")))
 
     if tag:
         need_meta_join = True
@@ -286,7 +396,16 @@ async def search_documents(
         stmt = stmt.outerjoin(Document.content)
     if need_meta_join:
         stmt = stmt.outerjoin(Document.metadata_entries)
-    stmt = stmt.where(*filters).offset(offset).limit(limit)
+    if filters:
+        stmt = stmt.where(*filters)
+
+    # Ordina per rilevanza semantica se c'è una query
+    if query and 'query_emb' in locals() and query_emb:
+        stmt = stmt.order_by(DocumentContent.embedding.cosine_distance(cast(query_emb, Vector)))
+    else:
+        stmt = stmt.order_by(Document.created_at.desc())
+
+    stmt = stmt.offset(offset).limit(limit)
 
     documents = list((await db.execute(stmt)).scalars().unique().all())
 
@@ -306,156 +425,71 @@ async def search_documents(
     return response
 
 
-# ── Cestino ───────────────────────────────────────────────────────────────────
 
-@router.get("/trash", response_model=PaginatedDocuments)
-async def list_trash(
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Documenti eliminati: solo i propri per utenti normali, tutti per ADMIN."""
-    where = [Document.is_deleted == True]
-    if current_user.role != UserRole.ADMIN:
-        where.append(Document.owner_id == current_user.id)
+# ── Export Bulk (ZIP) ─────────────────────────────────────────────────────────
 
-    total: int = (await db.execute(select(func.count(Document.id)).where(*where))).scalar() or 0
-
-    stmt = (
-        select(Document)
-        .options(selectinload(Document.metadata_entries), selectinload(Document.owner))
-        .where(*where)
-        .order_by(Document.deleted_at.desc())
-        .offset(offset)
-        .limit(limit)
-    )
-    docs = list((await db.execute(stmt)).scalars().unique().all())
-
-    return PaginatedDocuments(
-        items=[DocumentResponse.model_validate(d) for d in docs],
-        total=total,
-        limit=limit,
-        offset=offset,
-    )
-
-
-# ── Modifica metadati ─────────────────────────────────────────────────────────
-
-@router.patch("/{doc_id}", response_model=DocumentResponse)
-async def update_document(
-    doc_id: UUID,
-    payload: DocumentUpdate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    redis=Depends(get_redis),
-):
-    doc = await _get_accessible_doc(doc_id, current_user, db)
-    if doc.owner_id != current_user.id and current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Solo il proprietario o un admin possono modificare.")
-
-    if payload.title is not None:
-        doc.title = payload.title
-    if payload.is_restricted is not None:
-        doc.is_restricted = payload.is_restricted
-
-    if payload.metadata_json is not None:
-        meta = (
-            await db.execute(select(DocumentMetadata).where(DocumentMetadata.document_id == doc_id))
-        ).scalar_one_or_none()
-        if meta:
-            meta.metadata_json = payload.metadata_json
-        else:
-            db.add(DocumentMetadata(document_id=doc_id, metadata_json=payload.metadata_json))
-
-    db.add(AuditLog(user_id=current_user.id, action="EDIT", target_id=doc_id))
-    await db.commit()
-    await db.refresh(doc, ["metadata_entries", "owner"])
-    await _invalidate_user_cache(redis, current_user.id)
-    return doc
-
-
-# ── Soft delete ───────────────────────────────────────────────────────────────
-
-@router.delete("/{doc_id}", status_code=204)
-async def soft_delete_document(
-    doc_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    redis=Depends(get_redis),
-):
-    stmt = select(Document).where(Document.id == doc_id, Document.is_deleted == False)
-    doc = (await db.execute(stmt)).scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Documento non trovato.")
-    if doc.owner_id != current_user.id and current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Accesso negato.")
-
-    doc.is_deleted = True
-    doc.deleted_at = datetime.now(timezone.utc)
-    db.add(AuditLog(user_id=current_user.id, action="DELETE", target_id=doc_id))
-    await db.commit()
-    await _invalidate_user_cache(redis, current_user.id)
-
-
-# ── Ripristino dal cestino ────────────────────────────────────────────────────
-
-@router.post("/{doc_id}/restore", response_model=DocumentResponse)
-async def restore_document(
-    doc_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    redis=Depends(get_redis),
-):
-    stmt = (
-        select(Document)
-        .options(selectinload(Document.metadata_entries), selectinload(Document.owner))
-        .where(Document.id == doc_id, Document.is_deleted == True)
-    )
-    doc = (await db.execute(stmt)).scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Documento non trovato nel cestino.")
-    if doc.owner_id != current_user.id and current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Accesso negato.")
-
-    doc.is_deleted = False
-    doc.deleted_at = None
-    db.add(AuditLog(user_id=current_user.id, action="RESTORE", target_id=doc_id))
-    await db.commit()
-    await db.refresh(doc, ["metadata_entries", "owner"])
-    await _invalidate_user_cache(redis, current_user.id)
-    return doc
-
-
-# ── Eliminazione permanente ───────────────────────────────────────────────────
-
-@router.delete("/{doc_id}/permanent", status_code=204)
-async def permanent_delete(
-    doc_id: UUID,
+@router.post("/export-bulk")
+async def export_bulk_documents(
+    request: BulkExportRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     storage: StorageLayer = Depends(get_storage),
-    redis=Depends(get_redis),
 ):
-    """Eliminazione definitiva con rimozione file fisici (proprietario o ADMIN)."""
-    stmt = select(Document).options(selectinload(Document.versions)).where(Document.id == doc_id)
-    doc = (await db.execute(stmt)).scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Documento non trovato.")
-    if doc.owner_id != current_user.id and current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Accesso negato.")
+    if not request.document_ids:
+        raise HTTPException(status_code=400, detail="No document IDs provided")
 
-    for ver in doc.versions:
-        try:
-            fp = await storage.get_file_path(ver.file_path)
-            if os.path.exists(fp):
-                os.remove(fp)
-        except Exception as exc:
-            logger.warning("Impossibile eliminare file %s: %s", ver.file_path, exc)
+    stmt = select(Document).options(selectinload(Document.owner)).where(
+        Document.id.in_(request.document_ids),
+        Document.deleted_at.is_(None)
+    )
+    docs = (await db.execute(stmt)).scalars().all()
 
-    await db.execute(sa_delete(Document).where(Document.id == doc_id))
-    await db.commit()
-    await _invalidate_user_cache(redis, current_user.id)
+    if not docs:
+        raise HTTPException(status_code=404, detail="No active documents found")
+
+    export_files = []
+    for doc in docs:
+        if doc.is_restricted and current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+            continue
+
+        v_stmt = select(DocumentVersion).where(
+            DocumentVersion.document_id == doc.id,
+            DocumentVersion.version_num == doc.current_version
+        )
+        ver = (await db.execute(v_stmt)).scalar_one_or_none()
+        if ver:
+            file_path = await storage.get_file_path(ver.file_path)
+            if os.path.exists(file_path):
+                _, stored_ext = os.path.splitext(ver.file_path)
+                safe_title = "".join([c for c in doc.title if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).rstrip()
+                download_filename = f"{safe_title}{stored_ext}" if stored_ext else safe_title
+                export_files.append((file_path, download_filename))
+
+    if not export_files:
+        raise HTTPException(status_code=404, detail="No accessible files found to export")
+
+    import zipfile
+    import tempfile
+
+    def iterfile():
+        with tempfile.SpooledTemporaryFile(max_size=10*1024*1024, mode="w+b") as tmp:
+            with zipfile.ZipFile(tmp, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for file_path, arc_name in export_files:
+                    zf.write(file_path, arc_name)
+            tmp.seek(0)
+            while True:
+                chunk = tmp.read(65_536)
+                if not chunk:
+                    break
+                yield chunk
+
+    return StreamingResponse(
+        iterfile(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="documenti_selezionati.zip"',
+        },
+    )
 
 
 # ── Preview in-browser ────────────────────────────────────────────────────────
@@ -479,7 +513,7 @@ async def preview_document(
         raise HTTPException(status_code=404, detail="Versione non trovata.")
 
     file_path = await storage.get_file_path(ver.file_path)
-    file_size = os.path.getsize(file_path)
+    file_size = await asyncio.to_thread(os.path.getsize, file_path)
     mime_type, _ = mimetypes.guess_type(file_path)
     mime_type = mime_type or "application/octet-stream"
 
@@ -590,6 +624,7 @@ async def revoke_share(
 async def download_document(
     doc_id: UUID,
     version: Optional[int] = None,
+    inline: bool = False,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     storage: StorageLayer = Depends(get_storage),
@@ -605,7 +640,7 @@ async def download_document(
         raise HTTPException(status_code=404, detail="Versione non trovata.")
 
     file_path = await storage.get_file_path(ver.file_path)
-    file_size = os.path.getsize(file_path)
+    file_size = await asyncio.to_thread(os.path.getsize, file_path)
     _, stored_ext = os.path.splitext(ver.file_path)
     download_filename = f"{doc.title}{stored_ext}" if stored_ext else doc.title
     mime_type, _ = mimetypes.guess_type(file_path)
@@ -619,11 +654,12 @@ async def download_document(
                     break
                 yield chunk
 
+    disposition = "inline" if inline else "attachment"
     return StreamingResponse(
         stream_file(),
         media_type=mime_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{download_filename}"',
+            "Content-Disposition": f'{disposition}; filename="{download_filename}"',
             "Content-Length": str(file_size),
         },
     )
@@ -644,3 +680,178 @@ async def get_document_history(
         .order_by(DocumentVersion.version_num.desc())
     )
     return (await db.execute(v_stmt)).scalars().all()
+
+
+# ── Statistiche ─────────────────────────────────────────────────────────────────
+
+@router.get("/stats")
+async def get_documents_stats(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.role != UserRole.ADMIN:
+        # Se non è admin, torna le statistiche solo dei suoi documenti o vuoto
+        filters = [Document.deleted_at.is_(None), Document.owner_id == current_user.id]
+    else:
+        filters = [Document.deleted_at.is_(None)]
+        
+    # Totale documenti attivi
+    total_docs_stmt = select(func.count(distinct(Document.id))).where(*filters)
+    total_docs = (await db.execute(total_docs_stmt)).scalar() or 0
+    
+    # Per semplicità, in questa prima iterazione carichiamo tutti i documenti rilevanti
+    # ed estraiamo i tag in memoria (essendo un JSON)
+    docs_stmt = select(Document).options(selectinload(Document.metadata_entries)).where(*filters)
+    docs = (await db.execute(docs_stmt)).scalars().all()
+    
+    tags_count = {}
+    users_count = {}
+    
+    for d in docs:
+        users_count[str(d.owner_id)] = users_count.get(str(d.owner_id), 0) + 1
+        
+        if d.metadata_entries and d.metadata_entries[0].metadata_json:
+            doc_tags = d.metadata_entries[0].metadata_json.get("tags", [])
+            for t in doc_tags:
+                tags_count[t] = tags_count.get(t, 0) + 1
+                
+    # Ordinamento tag: top 10
+    top_tags = dict(sorted(tags_count.items(), key=lambda item: item[1], reverse=True)[:10])
+    
+    return {
+        "total_documents": total_docs,
+        "by_tags": top_tags,
+        "by_users": users_count
+    }
+
+# ── Cestino / Soft Delete ─────────────────────────────────────────────────────
+
+@router.get("/trash", response_model=PaginatedDocuments)
+async def get_trash(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if current_user.role != UserRole.ADMIN:
+        # User only sees their own deleted items
+        filters = [Document.deleted_at.isnot(None), Document.owner_id == current_user.id]
+    else:
+        filters = [Document.deleted_at.isnot(None)]
+
+    count_stmt = select(func.count(distinct(Document.id))).select_from(Document).where(*filters)
+    total: int = (await db.execute(count_stmt)).scalar() or 0
+
+    stmt = select(Document).options(
+        selectinload(Document.metadata_entries),
+        selectinload(Document.owner)
+    ).where(*filters).order_by(Document.deleted_at.desc()).offset(offset).limit(limit)
+
+    documents = list((await db.execute(stmt)).scalars().unique().all())
+
+    return PaginatedDocuments(
+        items=[DocumentResponse.model_validate(d) for d in documents],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+@router.delete("/{doc_id}")
+async def soft_delete_document(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis)
+):
+    stmt = select(Document).where(Document.id == doc_id, Document.deleted_at.is_(None))
+    doc = (await db.execute(stmt)).scalar_one_or_none()
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found or already in trash")
+        
+    if current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+        
+    doc.deleted_at = func.now()
+    
+    audit = AuditLog(user_id=current_user.id, action="SOFT_DELETE", target_id=doc.id)
+    db.add(audit)
+    
+    await db.commit()
+    
+    if redis:
+        try:
+            async for key in redis.scan_iter(f"docs:{current_user.id}:*"):
+                await redis.delete(key)
+        except Exception:
+            pass
+            
+    return {"message": "Document moved to trash"}
+
+@router.post("/{doc_id}/restore", response_model=DocumentResponse)
+async def restore_document(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis)
+):
+    stmt = select(Document).options(selectinload(Document.metadata_entries), selectinload(Document.owner)).where(Document.id == doc_id, Document.deleted_at.isnot(None))
+    doc = (await db.execute(stmt)).scalar_one_or_none()
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found in trash")
+        
+    if current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+        
+    doc.deleted_at = None
+    
+    audit = AuditLog(user_id=current_user.id, action="RESTORE", target_id=doc.id)
+    db.add(audit)
+    
+    await db.commit()
+    await db.refresh(doc)
+    
+    if redis:
+        try:
+            async for key in redis.scan_iter(f"docs:{current_user.id}:*"):
+                await redis.delete(key)
+        except Exception:
+            pass
+            
+    return doc
+
+@router.delete("/{doc_id}/hard")
+async def hard_delete_document(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    storage: StorageLayer = Depends(get_storage),
+    redis=Depends(get_redis)
+):
+    stmt = select(Document).options(selectinload(Document.versions)).where(Document.id == doc_id, Document.deleted_at.isnot(None))
+    doc = (await db.execute(stmt)).scalar_one_or_none()
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found in trash. Soft delete it first.")
+        
+    if current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+        
+    # Delete associated files from storage
+    if hasattr(doc, 'versions') and doc.versions:
+        for ver in doc.versions:
+            try:
+                await storage.delete_file(ver.file_path)
+            except Exception as e:
+                logger.error(f"Failed to delete artifact {ver.file_path} for doc {doc_id}: {e}")
+                
+    # Delete from DB
+    await db.delete(doc)
+    
+    audit = AuditLog(user_id=current_user.id, action="HARD_DELETE", target_id=doc.id)
+    db.add(audit)
+    
+    await db.commit()
+    
+    return {"message": "Document permanently deleted"}
