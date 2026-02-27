@@ -1,0 +1,369 @@
+﻿diff --git a/backend/app/api/documents.py b/backend/app/api/documents.py
+index b0f41c3..fba8c4b 100644
+--- a/backend/app/api/documents.py
++++ b/backend/app/api/documents.py
+@@ -1,7 +1,7 @@
+ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+ from fastapi.responses import FileResponse
+ from sqlalchemy.ext.asyncio import AsyncSession
+-from sqlalchemy import select, or_
++from sqlalchemy import select, or_, distinct
+ from sqlalchemy.orm import selectinload
+ from typing import List, Optional
+ from uuid import UUID
+@@ -74,42 +74,52 @@ async def upload_document(
+     db.add(audit)
+     
+     await db.commit()
+-    
+-    # Reload the document with eager loading for the requested relationships needed by Pydantic
+-    stmt = select(Document).options(selectinload(Document.metadata_entries)).where(Document.id == doc.id)
+-    result = await db.execute(stmt)
+-    full_doc = result.scalar_one()
+-    
+-    return full_doc
++
++    # Refresh the document with eager loading for relationships
++    await db.refresh(doc, ['metadata_entries', 'owner'])
++
++    return doc
+ 
+ @router.get("/search", response_model=List[DocumentResponse])
+ async def search_documents(
+     query: Optional[str] = None,
+     tag: Optional[str] = None,
++    limit: int = Query(20, ge=1, le=100),
++    offset: int = Query(0, ge=0),
+     current_user: User = Depends(get_current_user),
+     db: AsyncSession = Depends(get_db)
+ ):
+-    stmt = select(Document).options(selectinload(Document.metadata_entries)).outerjoin(DocumentMetadata)
+-    
++    stmt = select(Document).options(
++        selectinload(Document.metadata_entries),
++        selectinload(Document.owner)
++    )
++
++    # Only join metadata table if filtering by tag
++    if tag:
++        stmt = stmt.outerjoin(DocumentMetadata)
++
+     filters = []
+-    
++
+     # RBAC logic
+     if current_user.role != UserRole.ADMIN:
+         filters.append(or_(
+             Document.is_restricted == False,
+             Document.owner_id == current_user.id
+         ))
+-    
++
+     if query:
+         # Simplified query for now, will implement full PG FTS later
+         filters.append(Document.title.ilike(f"%{query}%"))
+-        
++
+     if tag:
+         filters.append(DocumentMetadata.metadata_json['tags'].contains([tag]))
+-        
++
+     if filters:
+         stmt = stmt.where(*filters)
+-        
++
++    # Apply pagination
++    stmt = stmt.offset(offset).limit(limit)
++
+     result = await db.execute(stmt)
+     return result.scalars().unique().all()
+ 
+@@ -121,7 +131,9 @@ async def download_document(
+     db: AsyncSession = Depends(get_db),
+     storage: StorageLayer = Depends(get_storage)
+ ):
+-    stmt = select(Document).where(Document.id == doc_id)
++    stmt = select(Document).options(
++        selectinload(Document.owner)
++    ).where(Document.id == doc_id)
+     result = await db.execute(stmt)
+     doc = result.scalar_one_or_none()
+     
+diff --git a/backend/app/core/config.py b/backend/app/core/config.py
+index ea57f7e..033c4d4 100644
+--- a/backend/app/core/config.py
++++ b/backend/app/core/config.py
+@@ -5,12 +5,13 @@ class Settings(BaseSettings):
+     PROJECT_NAME: str = "Documentale DMS"
+     DATABASE_URL: str
+     SECRET_KEY: str
++    DEBUG: bool = False
+     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+     ALGORITHM: str = "HS256"
+-    
++
+     GEMINI_API_KEY: Optional[str] = None
+     GEMINI_ENABLED: bool = True
+-    
++
+     STORAGE_PATH: str = "/app/storage/documents"
+     
+     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+diff --git a/backend/app/core/storage.py b/backend/app/core/storage.py
+index a28ea31..dc2f4fb 100644
+--- a/backend/app/core/storage.py
++++ b/backend/app/core/storage.py
+@@ -1,7 +1,8 @@
+ import os
+-import shutil
++import uuid
+ from abc import ABC, abstractmethod
+ from typing import BinaryIO
++import aiofiles
+ from .config import settings
+ 
+ class StorageLayer(ABC):
+@@ -29,21 +30,22 @@ class LocalStorage(StorageLayer):
+     async def save_file(self, file: BinaryIO, filename: str) -> str:
+         # Prevent path traversal attacks
+         safe_filename = os.path.basename(filename)
+-        
+-        # Create subfolder based on date or category if needed
+-        # For simplicity, just use base path
+-        file_path = os.path.join(self.base_path, safe_filename)
+-        
+-        # Ensure unique filename if exists
+-        counter = 1
++
++        # Use UUID prefix to ensure uniqueness atomically without race conditions
+         name, ext = os.path.splitext(safe_filename)
+-        while os.path.exists(file_path):
+-            file_path = os.path.join(self.base_path, f"{name}_{counter}{ext}")
+-            counter += 1
++        unique_filename = f"{uuid.uuid4().hex}_{name}{ext}"
++        file_path = os.path.join(self.base_path, unique_filename)
++
++        # Use aiofiles for async file I/O to avoid blocking event loop
++        async with aiofiles.open(file_path, "wb") as f:
++            # Read in chunks to avoid loading entire file in memory
++            chunk_size = 1024 * 1024  # 1MB chunks
++            while True:
++                chunk = file.read(chunk_size)
++                if not chunk:
++                    break
++                await f.write(chunk)
+ 
+-        with open(file_path, "wb") as buffer:
+-            shutil.copyfileobj(file, buffer)
+-            
+         return os.path.relpath(file_path, self.base_path)
+ 
+     async def get_file_path(self, relative_path: str) -> str:
+@@ -51,9 +53,12 @@ class LocalStorage(StorageLayer):
+ 
+     async def delete_file(self, relative_path: str) -> bool:
+         path = await self.get_file_path(relative_path)
+-        if os.path.exists(path):
+-            os.remove(path)
+-            return True
++        try:
++            if os.path.exists(path):
++                os.remove(path)  # os.remove is fast enough for deletions
++                return True
++        except OSError:
++            return False
+         return False
+ 
+ # Dependency injection helper
+diff --git a/backend/app/db.py b/backend/app/db.py
+index d81cd3a..de77077 100644
+--- a/backend/app/db.py
++++ b/backend/app/db.py
+@@ -2,7 +2,14 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
+ from sqlalchemy.orm import DeclarativeBase
+ from .core.config import settings
+ 
+-engine = create_async_engine(settings.DATABASE_URL, echo=True)
++engine = create_async_engine(
++    settings.DATABASE_URL,
++    echo=settings.DEBUG,
++    pool_size=20,
++    max_overflow=40,
++    pool_pre_ping=True,
++    pool_recycle=3600,
++)
+ SessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
+ 
+ class Base(DeclarativeBase):
+diff --git a/backend/app/models/document.py b/backend/app/models/document.py
+index 3324d21..a676942 100644
+--- a/backend/app/models/document.py
++++ b/backend/app/models/document.py
+@@ -1,4 +1,4 @@
+-from sqlalchemy import Column, String, Integer, UUID, ForeignKey, DateTime, Boolean, JSON, func, Table
++from sqlalchemy import Column, String, Integer, UUID, ForeignKey, DateTime, Boolean, JSON, func, Table, Index
+ from sqlalchemy.orm import relationship
+ from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
+ import uuid
+@@ -10,9 +10,9 @@ class Document(Base):
+     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+     title = Column(String, nullable=False, index=True)
+     current_version = Column(Integer, default=1)
+-    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+-    is_restricted = Column(Boolean, default=False)
+-    created_at = Column(DateTime(timezone=True), server_default=func.now())
++    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
++    is_restricted = Column(Boolean, default=False, index=True)
++    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+ 
+     owner = relationship("User", back_populates="documents")
+@@ -20,6 +20,12 @@ class Document(Base):
+     metadata_entries = relationship("DocumentMetadata", back_populates="document", cascade="all, delete-orphan")
+     content = relationship("DocumentContent", uselist=False, back_populates="document", cascade="all, delete-orphan")
+ 
++    # Composite index for common RBAC query pattern
++    __table_args__ = (
++        Index('idx_owner_restricted', 'owner_id', 'is_restricted'),
++        Index('idx_created_at_desc', 'created_at'),
++    )
++
+     @property
+     def doc_metadata(self):
+         """Flatten metadata entries for easy access in schemas."""
+@@ -31,7 +37,7 @@ class DocumentVersion(Base):
+     __tablename__ = "doc_versions"
+ 
+     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+-    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False)
++    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False, index=True)
+     version_num = Column(Integer, nullable=False)
+     file_path = Column(String, nullable=False)
+     checksum = Column(String, nullable=True)
+@@ -39,15 +45,25 @@ class DocumentVersion(Base):
+ 
+     document = relationship("Document", back_populates="versions")
+ 
++    # Composite index for efficient version lookups
++    __table_args__ = (
++        Index('idx_document_version', 'document_id', 'version_num'),
++    )
++
+ class DocumentMetadata(Base):
+     __tablename__ = "doc_metadata"
+ 
+     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+-    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False)
++    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False, index=True)
+     metadata_json = Column(JSONB, nullable=False) # {tags: [], dept: "", author: "", ...}
+ 
+     document = relationship("Document", back_populates="metadata_entries")
+ 
++    # GIN index for efficient JSONB queries
++    __table_args__ = (
++        Index('idx_metadata_json_gin', 'metadata_json', postgresql_using='gin'),
++    )
++
+ class DocumentContent(Base):
+     __tablename__ = "doc_content"
+ 
+diff --git a/frontend/src/components/DocumentCard.tsx b/frontend/src/components/DocumentCard.tsx
+index 403ba20..0350b02 100644
+--- a/frontend/src/components/DocumentCard.tsx
++++ b/frontend/src/components/DocumentCard.tsx
+@@ -1,24 +1,27 @@
+-import React from 'react';
++import React, { useCallback } from 'react';
+ import { FileDown, Calendar, User } from 'lucide-react';
+ import api from '../services/api';
+ 
+ const DocumentCard: React.FC<{ doc: any }> = ({ doc }) => {
+-    const handleDownload = async () => {
++    const handleDownload = useCallback(async () => {
+         try {
+             const response = await api.get(`/documents/${doc.id}/download`, {
+                 responseType: 'blob'
+             });
+-            const url = window.URL.createObjectURL(new Blob([response.data]));
++            // Use response.data directly (already a blob), don't wrap it again
++            const url = URL.createObjectURL(response.data);
+             const link = document.createElement('a');
+             link.href = url;
+             link.setAttribute('download', doc.title);
+             document.body.appendChild(link);
+             link.click();
+             link.remove();
++            // Clean up the object URL to free memory
++            URL.revokeObjectURL(url);
+         } catch (err) {
+             console.error('Download failed', err);
+         }
+-    };
++    }, [doc.id, doc.title]);
+ 
+     return (
+         <div className="doc-card">
+@@ -51,4 +54,4 @@ const DocumentCard: React.FC<{ doc: any }> = ({ doc }) => {
+     );
+ };
+ 
+-export default DocumentCard;
++export default React.memo(DocumentCard);
+diff --git a/frontend/src/pages/DashboardPage.tsx b/frontend/src/pages/DashboardPage.tsx
+index 0de6683..ac3bc21 100644
+--- a/frontend/src/pages/DashboardPage.tsx
++++ b/frontend/src/pages/DashboardPage.tsx
+@@ -1,4 +1,4 @@
+-import React, { useState } from 'react';
++import React, { useState, useEffect, useCallback } from 'react';
+ import { useQuery } from '@tanstack/react-query';
+ import api from '../services/api';
+ import { useAuth } from '../store/AuthContext';
+@@ -8,19 +8,33 @@ import UploadModal from '../components/UploadModal';
+ import BulkUploadModal from '../components/BulkUploadModal';
+ 
+ const DashboardPage: React.FC = () => {
+-    const [searchQuery, setSearchQuery] = useState('');
++    const [inputValue, setInputValue] = useState('');
++    const [debouncedQuery, setDebouncedQuery] = useState('');
+     const [isUploadOpen, setIsUploadOpen] = useState(false);
+     const [isBulkOpen, setIsBulkOpen] = useState(false);
+     const { logout } = useAuth();
+ 
++    // Debounce search input (500ms delay)
++    useEffect(() => {
++        const timer = setTimeout(() => {
++            setDebouncedQuery(inputValue);
++        }, 500);
++
++        return () => clearTimeout(timer);
++    }, [inputValue]);
++
+     const { data: documents, isLoading, refetch } = useQuery({
+-        queryKey: ['documents', searchQuery],
++        queryKey: ['documents', debouncedQuery],
+         queryFn: async () => {
+-            const response = await api.get(`/documents/search?query=${searchQuery}`);
++            const response = await api.get(`/documents/search?query=${debouncedQuery}`);
+             return response.data;
+         }
+     });
+ 
++    const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
++        setInputValue(e.target.value);
++    }, []);
++
+     return (
+         <div>
+             <nav className="nav">
+@@ -50,8 +64,8 @@ const DashboardPage: React.FC = () => {
+                         className="input"
+                         style={{ paddingLeft: '3rem', marginBottom: 0 }}
+                         placeholder="Cerca documenti per titolo, tag o contenuto..."
+-                        value={searchQuery}
+-                        onChange={(e) => setSearchQuery(e.target.value)}
++                        value={inputValue}
++                        onChange={handleSearchChange}
+                     />
+                 </div>
+ 

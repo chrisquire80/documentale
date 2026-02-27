@@ -1,0 +1,821 @@
+﻿diff --git a/backend/Dockerfile b/backend/Dockerfile
+index c171534..c2e3337 100644
+--- a/backend/Dockerfile
++++ b/backend/Dockerfile
+@@ -5,6 +5,8 @@ WORKDIR /app
+ RUN apt-get update && apt-get install -y \
+     build-essential \
+     libpq-dev \
++    tesseract-ocr \
++    tesseract-ocr-ita \
+     && rm -rf /var/lib/apt/lists/*
+ 
+ COPY requirements.txt .
+diff --git a/backend/app/api/auth.py b/backend/app/api/auth.py
+index 3e8b9cf..0c78a08 100644
+--- a/backend/app/api/auth.py
++++ b/backend/app/api/auth.py
+@@ -1,24 +1,36 @@
+-from fastapi import APIRouter, Depends, HTTPException, status
++from datetime import datetime, timezone
++from fastapi import APIRouter, Depends, HTTPException, Request, status
+ from fastapi.security import OAuth2PasswordBearer
+ from sqlalchemy.ext.asyncio import AsyncSession
+ from sqlalchemy import select
+ from jose import jwt, JWTError
++
+ from ..db import get_db
+ from ..models.user import User
+ from ..core.security import verify_password, create_access_token
+ from ..core.config import settings
+-from ..schemas.doc_schemas import Token, UserLogin
++from ..core.cache import get_redis
++from ..core.rate_limit import limiter
++from ..schemas.doc_schemas import Token, UserLogin, UserResponse
+ 
+ router = APIRouter(prefix="/auth", tags=["auth"])
+ 
+ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+ 
+-async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> User:
++_BLACKLIST_PREFIX = "blacklist:"
++
++
++async def get_current_user(
++    token: str = Depends(oauth2_scheme),
++    db: AsyncSession = Depends(get_db),
++    redis=Depends(get_redis),
++) -> User:
+     credentials_exception = HTTPException(
+         status_code=status.HTTP_401_UNAUTHORIZED,
+         detail="Could not validate credentials",
+         headers={"WWW-Authenticate": "Bearer"},
+     )
++
+     try:
+         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+         email: str = payload.get("sub")
+@@ -26,23 +38,66 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
+             raise credentials_exception
+     except JWTError:
+         raise credentials_exception
+-        
++
++    # Controlla blacklist token (logout server-side)
++    if redis:
++        try:
++            if await redis.get(f"{_BLACKLIST_PREFIX}{token}"):
++                raise credentials_exception
++        except HTTPException:
++            raise
++        except Exception:
++            pass  # Redis non disponibile: procedi senza blacklist
++
+     result = await db.execute(select(User).where(User.email == email))
+     user = result.scalar_one_or_none()
+     if user is None:
+         raise credentials_exception
+     return user
+ 
++
+ @router.post("/login", response_model=Token)
+-async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
++@limiter.limit("10/minute")
++async def login(request: Request, login_data: UserLogin, db: AsyncSession = Depends(get_db)):
+     result = await db.execute(select(User).where(User.email == login_data.email))
+     user = result.scalar_one_or_none()
+-    
++
+     if not user or not verify_password(login_data.password, user.hashed_password):
+         raise HTTPException(
+             status_code=status.HTTP_401_UNAUTHORIZED,
+-            detail="Incorrect email or password",
++            detail="Email o password non corretti.",
+         )
+-    
++
+     access_token = create_access_token(subject=user.email)
+     return {"access_token": access_token, "token_type": "bearer"}
++
++
++@router.post("/logout")
++@limiter.limit("30/minute")
++async def logout(
++    request: Request,
++    token: str = Depends(oauth2_scheme),
++    redis=Depends(get_redis),
++):
++    """
++    Invalida il token JWT inserendolo nella blacklist Redis con TTL pari al
++    tempo residuo. Anche senza Redis il client rimuove il token localmente.
++    """
++    if redis:
++        try:
++            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
++            exp = payload.get("exp")
++            if exp:
++                remaining_ttl = int(exp - datetime.now(tz=timezone.utc).timestamp())
++                if remaining_ttl > 0:
++                    await redis.setex(f"{_BLACKLIST_PREFIX}{token}", remaining_ttl, "1")
++        except Exception:
++            pass  # Token gi├á scaduto o Redis non disponibile
++
++    return {"message": "Logout effettuato con successo."}
++
++
++@router.get("/me", response_model=UserResponse)
++async def get_me(current_user: User = Depends(get_current_user)):
++    """Restituisce le informazioni dell'utente autenticato (incluso il ruolo)."""
++    return current_user
+diff --git a/backend/app/api/documents.py b/backend/app/api/documents.py
+index 541d902..2f9f0cb 100644
+--- a/backend/app/api/documents.py
++++ b/backend/app/api/documents.py
+@@ -1,25 +1,28 @@
+ import json
+ import hashlib
++import logging
+ import mimetypes
+ import os
+ import aiofiles
+-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+-from fastapi.encoders import jsonable_encoder
++from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Form, Query
+ from fastapi.responses import StreamingResponse
+ from sqlalchemy.ext.asyncio import AsyncSession
+-from sqlalchemy import select, or_, and_, distinct, func
++from sqlalchemy import select, update as sa_update, or_, and_, distinct, func
+ from sqlalchemy.orm import selectinload
+ from typing import List, Optional
+ from uuid import UUID
+ 
+-from ..db import get_db
++from ..db import get_db, SessionLocal
+ from ..models.user import User, UserRole
+ from ..models.document import Document, DocumentVersion, DocumentMetadata, DocumentContent
+ from ..models.audit import AuditLog
+ from ..schemas.doc_schemas import DocumentResponse, DocumentCreate, DocumentVersionResponse, PaginatedDocuments
+ from ..api.auth import get_current_user
+-from ..core.storage import get_storage, StorageLayer
++from ..core.storage import get_storage, StorageLayer, LocalStorage
+ from ..core.cache import get_redis
++from ..core.rate_limit import limiter
++
++logger = logging.getLogger(__name__)
+ 
+ router = APIRouter(prefix="/documents", tags=["documents"])
+ 
+@@ -27,8 +30,52 @@ router = APIRouter(prefix="/documents", tags=["documents"])
+ _CACHE_TTL = 300
+ 
+ 
++# ÔöÇÔöÇ Background task: OCR e aggiornamento FTS ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
++async def _run_ocr_background(
++    doc_id: UUID,
++    file_rel_path: str,
++    content_type: str,
++    initial_corpus: str,
++) -> None:
++    """
++    Eseguito dopo la risposta HTTP: estrae il testo dal file via OCR
++    e aggiorna DocumentContent.fulltext_content.
++    Il trigger PostgreSQL aggiorner├á search_vector automaticamente.
++    """
++    from ..services.ocr import extract_text
++
++    storage = LocalStorage()
++    abs_path = await storage.get_file_path(file_rel_path)
++
++    ocr_text = await extract_text(abs_path, content_type)
++    if not ocr_text:
++        return
++
++    merged = f"{initial_corpus} {ocr_text}".strip()
++
++    async with SessionLocal() as db:
++        try:
++            stmt = (
++                sa_update(DocumentContent)
++                .where(DocumentContent.document_id == doc_id)
++                .values(fulltext_content=merged)
++            )
++            await db.execute(stmt)
++            await db.commit()
++            logger.info("OCR completata per documento %s (%d chars).", doc_id, len(merged))
++        except Exception as exc:
++            await db.rollback()
++            logger.warning("Aggiornamento FTS fallito per %s: %s", doc_id, exc)
++
++
++# ÔöÇÔöÇ Upload ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
+ @router.post("/upload", response_model=DocumentResponse)
++@limiter.limit("20/minute")
+ async def upload_document(
++    request: Request,
++    background_tasks: BackgroundTasks,
+     title: str = Form(...),
+     is_restricted: bool = Form(False),
+     metadata_json: str = Form("{}"),
+@@ -38,7 +85,6 @@ async def upload_document(
+     storage: StorageLayer = Depends(get_storage),
+     redis=Depends(get_redis),
+ ):
+-    # Validate file type
+     allowed_types = [
+         "application/pdf",
+         "application/msword",
+@@ -52,19 +98,19 @@ async def upload_document(
+     if file.content_type not in allowed_types:
+         raise HTTPException(status_code=400, detail="File type not allowed")
+ 
+-    # 1. Save file to storage
++    # 1. Salva file
+     file_rel_path = await storage.save_file(file.file, file.filename)
+ 
+-    # 2. Create Document entry
++    # 2. Documento
+     doc = Document(
+         title=title,
+         owner_id=current_user.id,
+         is_restricted=is_restricted,
+     )
+     db.add(doc)
+-    await db.flush()  # Get ID
++    await db.flush()
+ 
+-    # 3. Create Version entry
++    # 3. Versione
+     version = DocumentVersion(
+         document_id=doc.id,
+         version_num=1,
+@@ -72,7 +118,7 @@ async def upload_document(
+     )
+     db.add(version)
+ 
+-    # 4. Create Metadata entry
++    # 4. Metadati
+     metadata_data = json.loads(metadata_json)
+     meta = DocumentMetadata(
+         document_id=doc.id,
+@@ -80,16 +126,15 @@ async def upload_document(
+     )
+     db.add(meta)
+ 
+-    # 5. Create DocumentContent for full-text search.
+-    # The DB trigger (installed at startup) will auto-populate search_vector
+-    # from fulltext_content, so we build a plain-text corpus here.
++    # 5. DocumentContent con corpus base (titolo + metadati).
++    #    L'OCR arricchir├á fulltext_content in background dopo la risposta.
+     tags_text = " ".join(metadata_data.get("tags", []))
+     author_text = metadata_data.get("author", "")
+     dept_text = metadata_data.get("dept", "")
+-    fulltext = " ".join(filter(None, [title, author_text, dept_text, tags_text]))
++    initial_corpus = " ".join(filter(None, [title, author_text, dept_text, tags_text]))
+     doc_content = DocumentContent(
+         document_id=doc.id,
+-        fulltext_content=fulltext,
++        fulltext_content=initial_corpus,
+     )
+     db.add(doc_content)
+ 
+@@ -99,22 +144,33 @@ async def upload_document(
+ 
+     await db.commit()
+ 
+-    # Invalidate this user's search cache so new document appears immediately
++    # Schedula OCR in background (non blocca la risposta HTTP)
++    background_tasks.add_task(
++        _run_ocr_background,
++        doc.id,
++        file_rel_path,
++        file.content_type,
++        initial_corpus,
++    )
++
++    # Invalida cache ricerche dell'utente
+     if redis:
+         try:
+-            pattern = f"docs:{current_user.id}:*"
+-            async for key in redis.scan_iter(pattern):
++            async for key in redis.scan_iter(f"docs:{current_user.id}:*"):
+                 await redis.delete(key)
+         except Exception:
+             pass
+ 
+-    # Refresh the document with eager loading for relationships
+     await db.refresh(doc, ["metadata_entries", "owner"])
+     return doc
+ 
+ 
++# ÔöÇÔöÇ Search ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
+ @router.get("/search", response_model=PaginatedDocuments)
++@limiter.limit("120/minute")
+ async def search_documents(
++    request: Request,
+     query: Optional[str] = None,
+     tag: Optional[str] = None,
+     limit: int = Query(20, ge=1, le=100),
+@@ -123,12 +179,9 @@ async def search_documents(
+     db: AsyncSession = Depends(get_db),
+     redis=Depends(get_redis),
+ ):
+-    # --- Cache look-up ---
+     cache_key = (
+         f"docs:{current_user.id}:"
+-        + hashlib.md5(
+-            f"{query or ''}:{tag or ''}:{limit}:{offset}".encode()
+-        ).hexdigest()
++        + hashlib.md5(f"{query or ''}:{tag or ''}:{limit}:{offset}".encode()).hexdigest()
+     )
+     if redis:
+         try:
+@@ -138,40 +191,27 @@ async def search_documents(
+         except Exception:
+             pass
+ 
+-    # --- Build filter predicates ---
+     filters = []
+     need_content_join = False
+     need_meta_join = False
+ 
+-    # RBAC: non-admin users see only their own restricted docs
+     if current_user.role != UserRole.ADMIN:
+         filters.append(
+-            or_(
+-                Document.is_restricted == False,
+-                Document.owner_id == current_user.id,
+-            )
++            or_(Document.is_restricted == False, Document.owner_id == current_user.id)
+         )
+ 
+     if query:
+         need_content_join = True
+-        # Use PostgreSQL FTS when a search_vector exists; fall back to ILIKE
+-        # for documents that pre-date the FTS feature.
+         fts_condition = and_(
+             DocumentContent.search_vector.isnot(None),
+-            DocumentContent.search_vector.op("@@")(
+-                func.plainto_tsquery("italian", query)
+-            ),
++            DocumentContent.search_vector.op("@@")(func.plainto_tsquery("italian", query)),
+         )
+-        ilike_condition = Document.title.ilike(f"%{query}%")
+-        filters.append(or_(fts_condition, ilike_condition))
++        filters.append(or_(fts_condition, Document.title.ilike(f"%{query}%")))
+ 
+     if tag:
+         need_meta_join = True
+-        filters.append(
+-            DocumentMetadata.metadata_json["tags"].contains([tag])
+-        )
++        filters.append(DocumentMetadata.metadata_json["tags"].contains([tag]))
+ 
+-    # --- COUNT query (for pagination metadata) ---
+     count_stmt = select(func.count(distinct(Document.id))).select_from(Document)
+     if need_content_join:
+         count_stmt = count_stmt.outerjoin(Document.content)
+@@ -180,10 +220,8 @@ async def search_documents(
+     if filters:
+         count_stmt = count_stmt.where(*filters)
+ 
+-    total_result = await db.execute(count_stmt)
+-    total: int = total_result.scalar() or 0
++    total: int = (await db.execute(count_stmt)).scalar() or 0
+ 
+-    # --- DATA query ---
+     stmt = select(Document).options(
+         selectinload(Document.metadata_entries),
+         selectinload(Document.owner),
+@@ -196,10 +234,8 @@ async def search_documents(
+         stmt = stmt.where(*filters)
+     stmt = stmt.offset(offset).limit(limit)
+ 
+-    result = await db.execute(stmt)
+-    documents = list(result.scalars().unique().all())
++    documents = list((await db.execute(stmt)).scalars().unique().all())
+ 
+-    # --- Build response ---
+     response = PaginatedDocuments(
+         items=[DocumentResponse.model_validate(d) for d in documents],
+         total=total,
+@@ -207,20 +243,17 @@ async def search_documents(
+         offset=offset,
+     )
+ 
+-    # --- Populate cache ---
+     if redis:
+         try:
+-            await redis.setex(
+-                cache_key,
+-                _CACHE_TTL,
+-                json.dumps(response.model_dump(mode="json")),
+-            )
++            await redis.setex(cache_key, _CACHE_TTL, json.dumps(response.model_dump(mode="json")))
+         except Exception:
+             pass
+ 
+     return response
+ 
+ 
++# ÔöÇÔöÇ Download (streaming) ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
+ @router.get("/{doc_id}/download")
+ async def download_document(
+     doc_id: UUID,
+@@ -229,40 +262,28 @@ async def download_document(
+     db: AsyncSession = Depends(get_db),
+     storage: StorageLayer = Depends(get_storage),
+ ):
+-    stmt = select(Document).options(
+-        selectinload(Document.owner)
+-    ).where(Document.id == doc_id)
+-    result = await db.execute(stmt)
+-    doc = result.scalar_one_or_none()
++    stmt = select(Document).options(selectinload(Document.owner)).where(Document.id == doc_id)
++    doc = (await db.execute(stmt)).scalar_one_or_none()
+ 
+     if not doc:
+         raise HTTPException(status_code=404, detail="Document not found")
+ 
+-    # RBAC
+-    if (
+-        doc.is_restricted
+-        and current_user.role != UserRole.ADMIN
+-        and doc.owner_id != current_user.id
+-    ):
++    if doc.is_restricted and current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+         raise HTTPException(status_code=403, detail="Permission denied")
+ 
+-    # Get version
+     v_stmt = select(DocumentVersion).where(DocumentVersion.document_id == doc_id)
+     if version:
+         v_stmt = v_stmt.where(DocumentVersion.version_num == version)
+     else:
+         v_stmt = v_stmt.where(DocumentVersion.version_num == doc.current_version)
+ 
+-    v_result = await db.execute(v_stmt)
+-    ver = v_result.scalar_one_or_none()
+-
++    ver = (await db.execute(v_stmt)).scalar_one_or_none()
+     if not ver:
+         raise HTTPException(status_code=404, detail="Version not found")
+ 
+     file_path = await storage.get_file_path(ver.file_path)
+     file_size = os.path.getsize(file_path)
+ 
+-    # Preserve original extension on the download filename
+     _, stored_ext = os.path.splitext(ver.file_path)
+     download_filename = f"{doc.title}{stored_ext}" if stored_ext else doc.title
+ 
+@@ -272,7 +293,7 @@ async def download_document(
+     async def stream_file():
+         async with aiofiles.open(file_path, "rb") as f:
+             while True:
+-                chunk = await f.read(65_536)  # 64 KB chunks
++                chunk = await f.read(65_536)
+                 if not chunk:
+                     break
+                 yield chunk
+@@ -287,24 +308,20 @@ async def download_document(
+     )
+ 
+ 
++# ÔöÇÔöÇ Versioni ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
+ @router.get("/{doc_id}/versions", response_model=List[DocumentVersionResponse])
+ async def get_document_history(
+     doc_id: UUID,
+     current_user: User = Depends(get_current_user),
+     db: AsyncSession = Depends(get_db),
+ ):
+-    stmt = select(Document).where(Document.id == doc_id)
+-    result = await db.execute(stmt)
+-    doc = result.scalar_one_or_none()
++    doc = (await db.execute(select(Document).where(Document.id == doc_id))).scalar_one_or_none()
+ 
+     if not doc:
+         raise HTTPException(status_code=404, detail="Document not found")
+ 
+-    if (
+-        doc.is_restricted
+-        and current_user.role != UserRole.ADMIN
+-        and doc.owner_id != current_user.id
+-    ):
++    if doc.is_restricted and current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+         raise HTTPException(status_code=403, detail="Permission denied")
+ 
+     v_stmt = (
+@@ -312,5 +329,4 @@ async def get_document_history(
+         .where(DocumentVersion.document_id == doc_id)
+         .order_by(DocumentVersion.version_num.desc())
+     )
+-    v_result = await db.execute(v_stmt)
+-    return v_result.scalars().all()
++    return (await db.execute(v_stmt)).scalars().all()
+diff --git a/backend/app/core/rate_limit.py b/backend/app/core/rate_limit.py
+new file mode 100644
+index 0000000..c9044c1
+--- /dev/null
++++ b/backend/app/core/rate_limit.py
+@@ -0,0 +1,16 @@
++"""
++Configurazione centralizzata del rate limiter (slowapi).
++
++Il limiter ├¿ definito qui per evitare import circolari tra main.py
++e i singoli router (auth, documents, ecc.).
++
++Limiti applicati:
++  - POST /auth/login    ÔåÆ 10 tentativi/minuto per IP  (anti brute-force)
++  - POST /auth/logout   ÔåÆ  30/minuto per IP
++  - POST /documents/upload  ÔåÆ 20 upload/minuto per IP
++  - GET  /documents/search  ÔåÆ 120 ricerche/minuto per IP
++"""
++from slowapi import Limiter
++from slowapi.util import get_remote_address
++
++limiter = Limiter(key_func=get_remote_address)
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 2ddf659..0016c61 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -1,13 +1,20 @@
+ import asyncio
+ from fastapi import FastAPI
+ from fastapi.middleware.cors import CORSMiddleware
++from slowapi import _rate_limit_exceeded_handler
++from slowapi.errors import RateLimitExceeded
+ from sqlalchemy import text
+ from .core.config import settings
+ from .core.cache import startup_redis, shutdown_redis
++from .core.rate_limit import limiter
+ from .db import engine, Base
+ 
+ app = FastAPI(title=settings.PROJECT_NAME)
+ 
++# Rate limiting
++app.state.limiter = limiter
++app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
++
+ app.add_middleware(
+     CORSMiddleware,
+     allow_origins=[
+diff --git a/backend/app/services/ocr.py b/backend/app/services/ocr.py
+new file mode 100644
+index 0000000..3da1668
+--- /dev/null
++++ b/backend/app/services/ocr.py
+@@ -0,0 +1,114 @@
++"""
++Servizio OCR asincrono per l'estrazione di testo da file caricati.
++
++Supporto per:
++  - PDF  ÔåÆ pdfplumber  (testo nativo, accurato e veloce)
++  - TXT  ÔåÆ lettura diretta aiofiles
++  - IMG  ÔåÆ pytesseract con lingua italiana (richiede tesseract-ocr nel sistema)
++
++Il servizio non lancia mai eccezioni verso i chiamanti: restituisce stringa
++vuota in caso di errore e logga un warning.
++"""
++import asyncio
++import logging
++from typing import Optional
++
++import aiofiles
++
++logger = logging.getLogger(__name__)
++
++# Lunghezza minima perch├® il testo estratto da PDF venga considerato valido.
++# PDF "scansionati" (solo immagini) producono testi quasi vuoti con pdfplumber.
++_MIN_PDF_TEXT_LEN = 30
++
++
++async def extract_text(file_path: str, content_type: str) -> str:
++    """
++    Estrae il testo grezzo da un file in modo asincrono.
++
++    Args:
++        file_path:    Percorso assoluto del file su disco.
++        content_type: MIME type del file (es. "application/pdf").
++
++    Returns:
++        Testo estratto (pu├▓ essere stringa vuota se il file non contiene
++        testo leggibile o se la libreria non ├¿ installata).
++    """
++    try:
++        if content_type == "application/pdf":
++            return await _extract_pdf(file_path)
++
++        if content_type == "text/plain":
++            return await _extract_txt(file_path)
++
++        if content_type.startswith("image/"):
++            return await _extract_image(file_path)
++
++        # Tipi non supportati (docx, ecc.) ÔåÆ stringa vuota per ora
++        return ""
++
++    except Exception as exc:  # noqa: BLE001
++        logger.warning("OCR fallita per '%s' (%s): %s", file_path, content_type, exc)
++        return ""
++
++
++# ÔöÇÔöÇ Estrattori privati ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
++async def _extract_pdf(path: str) -> str:
++    """Estrae testo da PDF con pdfplumber (run in thread-pool per evitare blocking)."""
++
++    def _sync() -> str:
++        import pdfplumber  # lazy import: non tutti i deploy lo hanno
++
++        with pdfplumber.open(path) as pdf:
++            pages_text = [page.extract_text() or "" for page in pdf.pages]
++
++        return " ".join(filter(None, pages_text)).strip()
++
++    text = await asyncio.get_event_loop().run_in_executor(None, _sync)
++
++    # Se il testo ├¿ troppo corto probabilmente ├¿ un PDF scansionato:
++    # proviamo con pytesseract su immagini delle pagine.
++    if len(text) < _MIN_PDF_TEXT_LEN:
++        logger.info("PDF '%s': testo nativo troppo corto (%d chars), provo OCR immagini.", path, len(text))
++        ocr_text = await _ocr_pdf_pages(path)
++        return ocr_text or text
++
++    return text
++
++
++async def _ocr_pdf_pages(path: str) -> str:
++    """OCR di un PDF scansionato tramite pdf2image + pytesseract (best-effort)."""
++
++    def _sync() -> str:
++        try:
++            from pdf2image import convert_from_path  # optional dep
++            import pytesseract
++
++            pages = convert_from_path(path, dpi=200)
++            texts = [pytesseract.image_to_string(p, lang="ita") for p in pages]
++            return " ".join(filter(None, texts)).strip()
++        except ImportError:
++            # pdf2image non installato: skip silenziosamente
++            return ""
++
++    return await asyncio.get_event_loop().run_in_executor(None, _sync)
++
++
++async def _extract_txt(path: str) -> str:
++    """Lettura diretta di file di testo semplice."""
++    async with aiofiles.open(path, "r", encoding="utf-8", errors="replace") as f:
++        return (await f.read()).strip()
++
++
++async def _extract_image(path: str) -> str:
++    """OCR su immagine con pytesseract (lingua italiana)."""
++
++    def _sync() -> str:
++        import pytesseract
++        from PIL import Image
++
++        img = Image.open(path)
++        return pytesseract.image_to_string(img, lang="ita").strip()
++
++    return await asyncio.get_event_loop().run_in_executor(None, _sync)
+diff --git a/backend/app/services/watcher.py b/backend/app/services/watcher.py
+index adfee34..5fc7689 100644
+--- a/backend/app/services/watcher.py
++++ b/backend/app/services/watcher.py
+@@ -12,11 +12,21 @@ import aiofiles
+ 
+ from ..db import SessionLocal
+ from ..models.user import User
+-from ..models.document import Document, DocumentVersion, DocumentMetadata
++from ..models.document import Document, DocumentVersion, DocumentMetadata, DocumentContent
+ from ..models.audit import AuditLog
+ from ..core.storage import LocalStorage, settings
++from ..services.ocr import extract_text as ocr_extract_text
+ from sqlalchemy import select
+ 
++# Mappa estensione ÔåÆ MIME type per l'OCR
++_EXT_MIME = {
++    '.pdf':  'application/pdf',
++    '.txt':  'text/plain',
++    '.jpg':  'image/jpeg',
++    '.jpeg': 'image/jpeg',
++    '.png':  'image/png',
++}
++
+ WATCH_DIR = "/app/auto_ingest"
+ ALLOWED_EXTENSIONS = {'.pdf', '.doc', '.docx', '.txt', '.jpg', '.jpeg', '.png'}
+ AUTO_USER_EMAIL = "admin@example.com" # Fallback owner per auto-ingest
+@@ -91,11 +101,23 @@ class AutoIngestHandler(FileSystemEventHandler):
+                     metadata_json={"tags": ["auto-ingest"]}
+                 )
+                 db.add(meta)
+-                
+-                # 5. Audit log
++
++                # 5. Estrai testo via OCR e crea DocumentContent per FTS
++                ext = os.path.splitext(filename)[1].lower()
++                content_type = _EXT_MIME.get(ext, 'application/octet-stream')
++                abs_path = await self.storage.get_file_path(file_rel_path)
++                ocr_text = await ocr_extract_text(abs_path, content_type)
++                corpus = f"{filename} {ocr_text}".strip() if ocr_text else filename
++                doc_content = DocumentContent(
++                    document_id=doc.id,
++                    fulltext_content=corpus,
++                )
++                db.add(doc_content)
++
++                # 6. Audit log
+                 audit = AuditLog(user_id=system_user.id, action="AUTO_UPLOAD", target_id=doc.id, details="Ingested by Documentale Watchdog")
+                 db.add(audit)
+-                
++
+                 await db.commit()
+                 print(f"Watchdog: Successfully ingested {filename}. Marking as processed...")
+                 
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index ebd688e..439047f 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -18,3 +18,7 @@ aiofiles==23.2.1
+ redis[hiredis]==5.0.8
+ fakeredis==2.23.0
+ pytest-asyncio==0.23.5
++pdfplumber==0.11.0
++pytesseract==0.3.13
++Pillow==10.3.0
++slowapi==0.1.9
+diff --git a/frontend/src/store/AuthContext.tsx b/frontend/src/store/AuthContext.tsx
+index e19ca56..e3c309e 100644
+--- a/frontend/src/store/AuthContext.tsx
++++ b/frontend/src/store/AuthContext.tsx
+@@ -1,7 +1,19 @@
+ import React, { createContext, useContext, useState, useEffect } from 'react';
++import api from '../services/api';
++
++export type UserRole = 'admin' | 'power_user' | 'reader';
++
++interface CurrentUser {
++    id: string;
++    email: string;
++    role: UserRole;
++    department?: string;
++    is_active: boolean;
++}
+ 
+ interface AuthContextType {
+     isAuthenticated: boolean;
++    currentUser: CurrentUser | null;
+     login: (token: string) => void;
+     logout: () => void;
+     isLoading: boolean;
+@@ -11,28 +23,44 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
+ 
+ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+     const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
++    const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+     const [isLoading, setIsLoading] = useState<boolean>(true);
+ 
++    const fetchMe = async () => {
++        try {
++            const res = await api.get<CurrentUser>('/auth/me');
++            setCurrentUser(res.data);
++        } catch {
++            setCurrentUser(null);
++        }
++    };
++
+     useEffect(() => {
+         const token = localStorage.getItem('token');
+         if (token) {
+             setIsAuthenticated(true);
++            fetchMe().finally(() => setIsLoading(false));
++        } else {
++            setIsLoading(false);
+         }
+-        setIsLoading(false);
+     }, []);
+ 
+     const login = (token: string) => {
+         localStorage.setItem('token', token);
+         setIsAuthenticated(true);
++        fetchMe();
+     };
+ 
+     const logout = () => {
++        // Invalida il token server-side nella blacklist Redis ÔÇö fire-and-forget
++        api.post('/auth/logout').catch(() => {});
+         localStorage.removeItem('token');
+         setIsAuthenticated(false);
++        setCurrentUser(null);
+     };
+ 
+     return (
+-        <AuthContext.Provider value={{ isAuthenticated, login, logout, isLoading }}>
++        <AuthContext.Provider value={{ isAuthenticated, currentUser, login, logout, isLoading }}>
+             {children}
+         </AuthContext.Provider>
+     );

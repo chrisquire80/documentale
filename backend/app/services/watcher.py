@@ -17,6 +17,8 @@ from ..models.audit import AuditLog
 from ..core.storage import LocalStorage
 from ..core.config import settings
 from ..services.ocr import extract_text as ocr_extract_text
+from ..services.llm_metadata import extract_metadata_from_text
+from ..services.embeddings import generate_embedding
 from sqlalchemy import select
 
 # Mappa estensione → MIME type per l'OCR
@@ -110,6 +112,24 @@ class AutoIngestHandler(FileSystemEventHandler):
                     fulltext_content=corpus,
                 )
                 db.add(doc_content)
+                
+                # 5.5 Auto-tagging con Gemini
+                ai_metadata = await extract_metadata_from_text(corpus)
+                if ai_metadata:
+                    current_json = meta.metadata_json
+                    existing_tags = set(current_json.get("tags", []))
+                    ai_tags = set(ai_metadata.get("tags", []))
+                    current_json["tags"] = list(existing_tags.union(ai_tags))
+                    
+                    if ai_metadata.get("department") and ai_metadata["department"] != "Generale":
+                        current_json["dept"] = ai_metadata["department"]
+                        
+                    meta.metadata_json = dict(current_json)
+
+                # 5.6 Semantic Embeddings
+                ai_embedding = await generate_embedding(corpus)
+                if ai_embedding:
+                    doc_content.embedding = ai_embedding
 
                 # 6. Audit log
                 audit = AuditLog(user_id=system_user.id, action="AUTO_UPLOAD", target_id=doc.id, details="Ingested by Documentale Watchdog")

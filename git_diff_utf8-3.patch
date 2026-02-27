@@ -1,0 +1,1104 @@
+﻿diff --git a/backend/app/api/admin.py b/backend/app/api/admin.py
+new file mode 100644
+index 0000000..9a39027
+--- /dev/null
++++ b/backend/app/api/admin.py
+@@ -0,0 +1,51 @@
++from fastapi import APIRouter, Depends, HTTPException
++
++from ..api.auth import get_current_user
++from ..models.user import User, UserRole
++from ..core.cache import get_redis
++
++router = APIRouter(prefix="/admin", tags=["admin"])
++
++
++@router.get("/stats")
++async def get_cache_stats(
++    current_user: User = Depends(get_current_user),
++    redis=Depends(get_redis),
++):
++    """Statistiche Redis/cache ÔÇö solo per amministratori."""
++    if current_user.role != UserRole.ADMIN:
++        raise HTTPException(
++            status_code=403,
++            detail="Riservato agli amministratori.",
++        )
++
++    if not redis:
++        return {
++            "redis_available": False,
++            "message": "Redis non disponibile. La cache ├¿ disabilitata.",
++        }
++
++    try:
++        info_stats = await redis.info("stats")
++        info_memory = await redis.info("memory")
++
++        hits: int = info_stats.get("keyspace_hits", 0)
++        misses: int = info_stats.get("keyspace_misses", 0)
++        total_ops = hits + misses
++        hit_rate = round((hits / total_ops * 100), 1) if total_ops > 0 else 0.0
++
++        cached_doc_keys = 0
++        async for _ in redis.scan_iter("docs:*"):
++            cached_doc_keys += 1
++
++        return {
++            "redis_available": True,
++            "keyspace_hits": hits,
++            "keyspace_misses": misses,
++            "hit_rate_percent": hit_rate,
++            "total_operations": total_ops,
++            "cached_doc_queries": cached_doc_keys,
++            "used_memory_human": info_memory.get("used_memory_human", "N/A"),
++        }
++    except Exception as exc:
++        raise HTTPException(status_code=500, detail=f"Errore Redis: {exc}")
+diff --git a/backend/app/api/documents.py b/backend/app/api/documents.py
+index 5f1ee90..541d902 100644
+--- a/backend/app/api/documents.py
++++ b/backend/app/api/documents.py
+@@ -1,8 +1,11 @@
+ import json
+ import hashlib
++import mimetypes
++import os
++import aiofiles
+ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+ from fastapi.encoders import jsonable_encoder
+-from fastapi.responses import FileResponse
++from fastapi.responses import StreamingResponse
+ from sqlalchemy.ext.asyncio import AsyncSession
+ from sqlalchemy import select, or_, and_, distinct, func
+ from sqlalchemy.orm import selectinload
+@@ -257,7 +260,31 @@ async def download_document(
+         raise HTTPException(status_code=404, detail="Version not found")
+ 
+     file_path = await storage.get_file_path(ver.file_path)
+-    return FileResponse(path=file_path, filename=doc.title)
++    file_size = os.path.getsize(file_path)
++
++    # Preserve original extension on the download filename
++    _, stored_ext = os.path.splitext(ver.file_path)
++    download_filename = f"{doc.title}{stored_ext}" if stored_ext else doc.title
++
++    mime_type, _ = mimetypes.guess_type(file_path)
++    mime_type = mime_type or "application/octet-stream"
++
++    async def stream_file():
++        async with aiofiles.open(file_path, "rb") as f:
++            while True:
++                chunk = await f.read(65_536)  # 64 KB chunks
++                if not chunk:
++                    break
++                yield chunk
++
++    return StreamingResponse(
++        stream_file(),
++        media_type=mime_type,
++        headers={
++            "Content-Disposition": f'attachment; filename="{download_filename}"',
++            "Content-Length": str(file_size),
++        },
++    )
+ 
+ 
+ @router.get("/{doc_id}/versions", response_model=List[DocumentVersionResponse])
+diff --git a/backend/app/main.py b/backend/app/main.py
+index b9e8b97..2ddf659 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -18,13 +18,15 @@ app.add_middleware(
+     allow_credentials=True,
+     allow_methods=["*"],
+     allow_headers=["*"],
++    expose_headers=["Content-Length", "Content-Disposition"],
+ )
+ 
+-from .api import auth, documents
++from .api import auth, documents, admin
+ from .services import watcher
+ 
+ app.include_router(auth.router)
+ app.include_router(documents.router)
++app.include_router(admin.router)
+ 
+ 
+ @app.on_event("startup")
+diff --git a/backend/pytest.ini b/backend/pytest.ini
+new file mode 100644
+index 0000000..c5453ab
+--- /dev/null
++++ b/backend/pytest.ini
+@@ -0,0 +1,5 @@
++[pytest]
++asyncio_mode = auto
++testpaths = tests
++markers =
++    integration: mark test as requiring a live PostgreSQL + Redis
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index f5ea64b..ebd688e 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -16,3 +16,5 @@ bcrypt==3.2.0
+ watchdog>=3.0.0
+ aiofiles==23.2.1
+ redis[hiredis]==5.0.8
++fakeredis==2.23.0
++pytest-asyncio==0.23.5
+diff --git a/backend/tests/__init__.py b/backend/tests/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/backend/tests/conftest.py b/backend/tests/conftest.py
+new file mode 100644
+index 0000000..fec141f
+--- /dev/null
++++ b/backend/tests/conftest.py
+@@ -0,0 +1,26 @@
++"""
++Fixtures condivise per la test suite di Documentale.
++
++Per i test di integrazione (che richiedono PostgreSQL attivo) usare il marker:
++    @pytest.mark.integration
++
++Per i test unitari le dipendenze DB/Redis vengono sostituite con mock/fake.
++"""
++import pytest
++import pytest_asyncio
++import fakeredis
++
++
++@pytest_asyncio.fixture
++async def fake_redis():
++    """Redis in-memory (fakeredis) utilizzabile senza un server Redis reale."""
++    client = fakeredis.aioredis.FakeRedis(decode_responses=True)
++    yield client
++    await client.aclose()
++
++
++def pytest_configure(config):
++    config.addinivalue_line(
++        "markers",
++        "integration: mark test as requiring a live PostgreSQL + Redis (excluded in unit test runs)",
++    )
+diff --git a/backend/tests/test_cache.py b/backend/tests/test_cache.py
+new file mode 100644
+index 0000000..bc35c37
+--- /dev/null
++++ b/backend/tests/test_cache.py
+@@ -0,0 +1,128 @@
++"""
++Test unitari per la logica di cache Redis.
++
++Non richiedono un server Redis reale: usano il fixture `fake_redis`
++(fakeredis in-memory) definito in conftest.py.
++"""
++import json
++import hashlib
++import time
++
++import pytest
++
++
++# ÔöÇÔöÇ Helpers ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
++def _make_cache_key(user_id: str, query: str, tag: str, limit: int, offset: int) -> str:
++    """Replica esatta della logica di cache key usata in documents.py."""
++    raw = f"{query}:{tag}:{limit}:{offset}"
++    return f"docs:{user_id}:{hashlib.md5(raw.encode()).hexdigest()}"
++
++
++SAMPLE_RESPONSE = {
++    "items": [{"id": "doc-1", "title": "Contratto", "is_restricted": False}],
++    "total": 1,
++    "limit": 20,
++    "offset": 0,
++}
++
++
++# ÔöÇÔöÇ Cache hit ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
++@pytest.mark.asyncio
++async def test_cache_stores_and_retrieves(fake_redis):
++    """Il valore inserito nella cache deve essere recuperato identico."""
++    key = _make_cache_key("user-1", "contratto", "", 20, 0)
++    await fake_redis.setex(key, 300, json.dumps(SAMPLE_RESPONSE))
++
++    cached_raw = await fake_redis.get(key)
++    assert cached_raw is not None, "La chiave deve essere presente in cache"
++    assert json.loads(cached_raw) == SAMPLE_RESPONSE
++
++
++@pytest.mark.asyncio
++async def test_cache_miss_returns_none(fake_redis):
++    """Una chiave mai inserita deve restituire None (cache miss)."""
++    key = _make_cache_key("user-2", "query-inesistente", "", 20, 0)
++    result = await fake_redis.get(key)
++    assert result is None
++
++
++# ÔöÇÔöÇ TTL ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
++@pytest.mark.asyncio
++async def test_cache_ttl_set_correctly(fake_redis):
++    """La cache deve avere TTL di 300 secondi."""
++    key = _make_cache_key("user-3", "test-ttl", "", 20, 0)
++    await fake_redis.setex(key, 300, json.dumps(SAMPLE_RESPONSE))
++
++    ttl = await fake_redis.ttl(key)
++    # fakeredis gestisce il TTL: deve essere tra 1 e 300
++    assert 1 <= ttl <= 300, f"TTL inatteso: {ttl}"
++
++
++# ÔöÇÔöÇ Invalidazione upload ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
++@pytest.mark.asyncio
++async def test_cache_invalidation_deletes_only_user_keys(fake_redis):
++    """
++    All'upload, devono essere cancellate solo le chiavi dell'utente che ha
++    caricato il file; le chiavi degli altri utenti devono sopravvivere.
++    """
++    user_a = "user-aaa"
++    user_b = "user-bbb"
++
++    key_a1 = _make_cache_key(user_a, "report", "", 20, 0)
++    key_a2 = _make_cache_key(user_a, "fattura", "admin", 10, 0)
++    key_b1 = _make_cache_key(user_b, "contratto", "", 20, 0)
++
++    await fake_redis.setex(key_a1, 300, json.dumps(SAMPLE_RESPONSE))
++    await fake_redis.setex(key_a2, 300, json.dumps(SAMPLE_RESPONSE))
++    await fake_redis.setex(key_b1, 300, json.dumps(SAMPLE_RESPONSE))
++
++    # Simula la logica di invalidazione eseguita dopo un upload dell'utente A
++    pattern = f"docs:{user_a}:*"
++    async for k in fake_redis.scan_iter(pattern):
++        await fake_redis.delete(k)
++
++    assert await fake_redis.get(key_a1) is None, "Chiave A1 deve essere stata eliminata"
++    assert await fake_redis.get(key_a2) is None, "Chiave A2 deve essere stata eliminata"
++    assert await fake_redis.get(key_b1) is not None, "Chiave B1 di altro utente deve sopravvivere"
++
++
++@pytest.mark.asyncio
++async def test_cache_invalidation_with_no_keys(fake_redis):
++    """L'invalidazione non deve fallire se l'utente non ha chiavi in cache."""
++    pattern = "docs:utente-senza-cache:*"
++    count = 0
++    async for k in fake_redis.scan_iter(pattern):
++        await fake_redis.delete(k)
++        count += 1
++    assert count == 0
++
++
++# ÔöÇÔöÇ Chiavi diverse per parametri diversi ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
++@pytest.mark.asyncio
++async def test_different_params_produce_different_keys(fake_redis):
++    """
++    Query diverse devono produrre chiavi di cache diverse, evitando
++    collisioni tra ricerche diverse dello stesso utente.
++    """
++    user = "user-xyz"
++
++    key_p1 = _make_cache_key(user, "alpha", "", 20, 0)
++    key_p2 = _make_cache_key(user, "beta", "", 20, 0)
++    key_p3 = _make_cache_key(user, "alpha", "", 20, 20)   # stessa query, pagina diversa
++
++    assert key_p1 != key_p2, "Query diverse ÔåÆ chiavi diverse"
++    assert key_p1 != key_p3, "Offset diversi ÔåÆ chiavi diverse"
++    assert key_p2 != key_p3
++
++
++@pytest.mark.asyncio
++async def test_same_params_produce_same_key(fake_redis):
++    """Gli stessi parametri devono produrre sempre la stessa chiave (determinismo)."""
++    k1 = _make_cache_key("user-det", "query", "tag", 20, 40)
++    k2 = _make_cache_key("user-det", "query", "tag", 20, 40)
++    assert k1 == k2
+diff --git a/backend/tests/test_fts_search.py b/backend/tests/test_fts_search.py
+new file mode 100644
+index 0000000..6aa6927
+--- /dev/null
++++ b/backend/tests/test_fts_search.py
+@@ -0,0 +1,146 @@
++"""
++Test per la logica di ricerca e paginazione.
++
++- I test unitari verificano schemi Pydantic e logica di calcolo.
++- I test di integrazione (marcati `@pytest.mark.integration`) richiedono
++  PostgreSQL attivo con il trigger FTS installato e vengono saltati in CI
++  senza DB.
++"""
++import pytest
++from pydantic import ValidationError
++
++# ÔöÇÔöÇ Schema Pydantic ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
++class TestPaginatedDocumentsSchema:
++    """Verifica la correttezza dello schema PaginatedDocuments."""
++
++    def test_empty_response_is_valid(self):
++        from app.schemas.doc_schemas import PaginatedDocuments
++        data = {"items": [], "total": 0, "limit": 20, "offset": 0}
++        paged = PaginatedDocuments(**data)
++        assert paged.total == 0
++        assert paged.items == []
++        assert paged.limit == 20
++        assert paged.offset == 0
++
++    def test_total_and_items_count_can_differ(self):
++        """total rappresenta il conteggio globale, items solo la pagina corrente."""
++        from app.schemas.doc_schemas import PaginatedDocuments
++        # total=100 ma items ha solo 20 elementi (pagina 1 di 5)
++        data = {"items": [], "total": 100, "limit": 20, "offset": 0}
++        paged = PaginatedDocuments(**data)
++        assert paged.total == 100
++
++    def test_missing_required_fields_raise_error(self):
++        from app.schemas.doc_schemas import PaginatedDocuments
++        with pytest.raises(ValidationError):
++            PaginatedDocuments(items=[], total=0)  # mancano limit e offset
++
++
++# ÔöÇÔöÇ Logica di paginazione ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
++class TestPaginationLogic:
++    """
++    Verifica la matematica di paginazione che il frontend usa per
++    calcolare l'offset e il numero totale di pagine.
++    """
++
++    @staticmethod
++    def _total_pages(total: int, limit: int) -> int:
++        return max(1, -(-total // limit))  # ceiling division
++
++    @staticmethod
++    def _offset(page: int, limit: int) -> int:
++        return (page - 1) * limit
++
++    def test_first_page_offset_is_zero(self):
++        assert self._offset(1, 20) == 0
++
++    def test_second_page_offset(self):
++        assert self._offset(2, 20) == 20
++
++    def test_total_pages_exact_multiple(self):
++        assert self._total_pages(40, 20) == 2
++
++    def test_total_pages_with_remainder(self):
++        assert self._total_pages(41, 20) == 3
++
++    def test_total_pages_zero_items(self):
++        assert self._total_pages(0, 20) == 1  # minimo 1 pagina
++
++    def test_total_pages_less_than_limit(self):
++        assert self._total_pages(5, 20) == 1
++
++
++# ÔöÇÔöÇ FTS corpus builder ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
++class TestFTSCorpusBuilder:
++    """
++    Verifica la logica di costruzione del corpus testuale usato per
++    popolare fulltext_content durante l'upload (documents.py).
++    """
++
++    @staticmethod
++    def _build_corpus(title: str, metadata: dict) -> str:
++        tags_text = " ".join(metadata.get("tags", []))
++        author_text = metadata.get("author", "")
++        dept_text = metadata.get("dept", "")
++        return " ".join(filter(None, [title, author_text, dept_text, tags_text]))
++
++    def test_corpus_includes_title(self):
++        corpus = self._build_corpus("Contratto fornitore", {})
++        assert "Contratto fornitore" in corpus
++
++    def test_corpus_includes_tags(self):
++        corpus = self._build_corpus("Doc", {"tags": ["fattura", "2024"]})
++        assert "fattura" in corpus
++        assert "2024" in corpus
++
++    def test_corpus_includes_author_and_dept(self):
++        corpus = self._build_corpus("Doc", {"author": "Mario Rossi", "dept": "Finanza"})
++        assert "Mario Rossi" in corpus
++        assert "Finanza" in corpus
++
++    def test_corpus_no_duplicate_spaces_when_optional_empty(self):
++        corpus = self._build_corpus("Documento", {"tags": []})
++        # Non ci devono essere spazi multipli
++        assert "  " not in corpus
++
++    def test_corpus_handles_all_empty_metadata(self):
++        corpus = self._build_corpus("Titolo", {})
++        assert corpus == "Titolo"
++
++
++# ÔöÇÔöÇ Integration (richiede PostgreSQL) ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++
++@pytest.mark.integration
++@pytest.mark.asyncio
++async def test_fts_trigger_populates_search_vector():
++    """
++    Verifica che dopo un INSERT in doc_content il trigger popoli
++    automaticamente search_vector.
++    Richiede un DB PostgreSQL con lo schema di Documentale installato.
++    """
++    pytest.skip("Test di integrazione: richiede PostgreSQL attivo con trigger installato.")
++
++
++@pytest.mark.integration
++@pytest.mark.asyncio
++async def test_fts_search_finds_document_by_content():
++    """
++    Verifica che plainto_tsquery('italian', ...) trovi documenti il cui
++    fulltext_content contiene la parola cercata.
++    Richiede un DB PostgreSQL.
++    """
++    pytest.skip("Test di integrazione: richiede PostgreSQL attivo.")
++
++
++@pytest.mark.integration
++@pytest.mark.asyncio
++async def test_fts_fallback_ilike_for_documents_without_content():
++    """
++    Verifica che i documenti senza riga in doc_content siano comunque trovati
++    tramite la ricerca ILIKE sul titolo.
++    Richiede un DB PostgreSQL.
++    """
++    pytest.skip("Test di integrazione: richiede PostgreSQL attivo.")
+diff --git a/frontend/src/components/CacheStatsModal.tsx b/frontend/src/components/CacheStatsModal.tsx
+new file mode 100644
+index 0000000..e70ef2a
+--- /dev/null
++++ b/frontend/src/components/CacheStatsModal.tsx
+@@ -0,0 +1,148 @@
++import React from 'react';
++import { useQuery } from '@tanstack/react-query';
++import { X, Database, Zap, HardDrive, Activity } from 'lucide-react';
++import api from '../services/api';
++
++interface Stats {
++    redis_available: boolean;
++    message?: string;
++    keyspace_hits?: number;
++    keyspace_misses?: number;
++    hit_rate_percent?: number;
++    total_operations?: number;
++    cached_doc_queries?: number;
++    used_memory_human?: string;
++}
++
++interface Props {
++    onClose: () => void;
++}
++
++function HitRateBar({ rate }: { rate: number }) {
++    const color = rate >= 70 ? '#22c55e' : rate >= 40 ? '#f59e0b' : '#ef4444';
++    return (
++        <div style={{ marginTop: '0.4rem' }}>
++            <div style={{ height: '6px', background: 'var(--glass)', borderRadius: '999px', overflow: 'hidden' }}>
++                <div style={{ width: `${rate}%`, height: '100%', background: color, borderRadius: '999px', transition: 'width 0.4s ease' }} />
++            </div>
++        </div>
++    );
++}
++
++const StatRow: React.FC<{ label: React.ReactNode; value: React.ReactNode }> = ({ label, value }) => (
++    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0', borderBottom: '1px solid var(--glass)' }}>
++        <span style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>{label}</span>
++        <strong>{value}</strong>
++    </div>
++);
++
++const CacheStatsModal: React.FC<Props> = ({ onClose }) => {
++    const { data, isLoading, error, dataUpdatedAt } = useQuery<Stats>({
++        queryKey: ['admin-stats'],
++        queryFn: async () => {
++            const res = await api.get('/admin/stats');
++            return res.data;
++        },
++        refetchInterval: 5000,
++        retry: false,
++    });
++
++    const lastUpdate = dataUpdatedAt
++        ? new Date(dataUpdatedAt).toLocaleTimeString('it-IT')
++        : 'ÔÇö';
++
++    return (
++        <div
++            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}
++            onClick={onClose}
++        >
++            <div
++                className="auth-card"
++                style={{ margin: 0, position: 'relative', width: '100%', maxWidth: '460px' }}
++                onClick={e => e.stopPropagation()}
++            >
++                {/* Header */}
++                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
++                    <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
++                        <Database size={18} style={{ color: 'var(--accent)' }} />
++                        Analytics Cache Redis
++                    </h2>
++                    <button
++                        onClick={onClose}
++                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex' }}
++                        aria-label="Chiudi"
++                    >
++                        <X size={20} />
++                    </button>
++                </div>
++
++                {/* Loading */}
++                {isLoading && (
++                    <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '2rem' }}>
++                        Caricamento statisticheÔÇª
++                    </div>
++                )}
++
++                {/* Error / Access denied */}
++                {error && (
++                    <div style={{ color: 'var(--error)', textAlign: 'center', padding: '1.5rem', background: 'rgba(239,68,68,0.08)', borderRadius: '0.5rem' }}>
++                        Accesso riservato agli amministratori.
++                    </div>
++                )}
++
++                {/* Redis unavailable */}
++                {data && !data.redis_available && (
++                    <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '1.5rem' }}>
++                        {data.message ?? 'Redis non disponibile. La cache ├¿ disabilitata.'}
++                    </div>
++                )}
++
++                {/* Stats */}
++                {data?.redis_available && (
++                    <>
++                        {/* Hit Rate with bar */}
++                        <div style={{ background: 'rgba(56,189,248,0.06)', borderRadius: '0.5rem', padding: '0.8rem 1rem', marginBottom: '1rem' }}>
++                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
++                                <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.875rem', color: 'var(--text-muted)' }}>
++                                    <Zap size={14} style={{ color: 'var(--accent)' }} />
++                                    Cache Hit Rate
++                                </span>
++                                <strong style={{ fontSize: '1.5rem', color: data.hit_rate_percent! >= 70 ? '#22c55e' : data.hit_rate_percent! >= 40 ? '#f59e0b' : '#ef4444' }}>
++                                    {data.hit_rate_percent}%
++                                </strong>
++                            </div>
++                            <HitRateBar rate={data.hit_rate_percent!} />
++                        </div>
++
++                        <StatRow
++                            label={<span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Activity size={14} />Hit</span>}
++                            value={<span style={{ color: '#22c55e' }}>{data.keyspace_hits?.toLocaleString('it-IT')}</span>}
++                        />
++                        <StatRow
++                            label="Miss"
++                            value={<span style={{ color: '#ef4444' }}>{data.keyspace_misses?.toLocaleString('it-IT')}</span>}
++                        />
++                        <StatRow
++                            label="Operazioni totali"
++                            value={data.total_operations?.toLocaleString('it-IT')}
++                        />
++                        <StatRow
++                            label="Query documenti in cache"
++                            value={data.cached_doc_queries}
++                        />
++                        <StatRow
++                            label={<span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><HardDrive size={14} />Memoria usata</span>}
++                            value={data.used_memory_human}
++                        />
++
++                        <div style={{ marginTop: '1rem', color: 'var(--text-muted)', fontSize: '0.75rem', textAlign: 'right' }}>
++                            Aggiornamento automatico ogni 5s ÔÇö ultimo: {lastUpdate}
++                        </div>
++                    </>
++                )}
++            </div>
++        </div>
++    );
++};
++
++export default CacheStatsModal;
+diff --git a/frontend/src/components/DocumentCard.tsx b/frontend/src/components/DocumentCard.tsx
+index 0350b02..8fa3601 100644
+--- a/frontend/src/components/DocumentCard.tsx
++++ b/frontend/src/components/DocumentCard.tsx
+@@ -1,25 +1,68 @@
+-import React, { useCallback } from 'react';
++import React, { useState, useCallback } from 'react';
+ import { FileDown, Calendar, User } from 'lucide-react';
+-import api from '../services/api';
++
++const BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:8000';
+ 
+ const DocumentCard: React.FC<{ doc: any }> = ({ doc }) => {
++    // null = idle | 0-100 = percentage during download
++    const [progress, setProgress] = useState<number | null>(null);
++    const [downloadError, setDownloadError] = useState(false);
++
+     const handleDownload = useCallback(async () => {
++        setProgress(0);
++        setDownloadError(false);
++
+         try {
+-            const response = await api.get(`/documents/${doc.id}/download`, {
+-                responseType: 'blob'
++            const token = localStorage.getItem('token');
++            const response = await fetch(`${BASE_URL}/documents/${doc.id}/download`, {
++                headers: token ? { Authorization: `Bearer ${token}` } : {},
+             });
+-            // Use response.data directly (already a blob), don't wrap it again
+-            const url = URL.createObjectURL(response.data);
++
++            if (!response.ok) throw new Error(`HTTP ${response.status}`);
++
++            const contentLength = response.headers.get('Content-Length');
++            const total = contentLength ? parseInt(contentLength, 10) : 0;
++
++            const reader = response.body!.getReader();
++            const chunks: Uint8Array[] = [];
++            let received = 0;
++
++            while (true) {
++                const { done, value } = await reader.read();
++                if (done) break;
++                chunks.push(value);
++                received += value.length;
++                if (total > 0) {
++                    setProgress(Math.min(99, Math.round((received / total) * 100)));
++                }
++            }
++
++            setProgress(100);
++
++            // Use filename from Content-Disposition if available
++            const disposition = response.headers.get('Content-Disposition') ?? '';
++            const match = disposition.match(/filename="(.+?)"/);
++            const filename = match ? match[1] : doc.title;
++
++            const blob = new Blob(chunks);
++            const url = URL.createObjectURL(blob);
+             const link = document.createElement('a');
+             link.href = url;
+-            link.setAttribute('download', doc.title);
++            link.download = filename;
+             document.body.appendChild(link);
+             link.click();
+             link.remove();
+-            // Clean up the object URL to free memory
+             URL.revokeObjectURL(url);
++
++            // Brief pause so the user sees 100% before the bar disappears
++            setTimeout(() => setProgress(null), 800);
+         } catch (err) {
+             console.error('Download failed', err);
++            setDownloadError(true);
++            setTimeout(() => {
++                setDownloadError(false);
++                setProgress(null);
++            }, 2500);
+         }
+     }, [doc.id, doc.title]);
+ 
+@@ -27,7 +70,20 @@ const DocumentCard: React.FC<{ doc: any }> = ({ doc }) => {
+         <div className="doc-card">
+             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                 <h3 style={{ margin: 0, fontSize: '1.125rem' }}>{doc.title}</h3>
+-                <button onClick={handleDownload} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)' }}>
++                <button
++                    onClick={handleDownload}
++                    disabled={progress !== null}
++                    title={downloadError ? 'Download fallito' : 'Scarica'}
++                    style={{
++                        background: 'none',
++                        border: 'none',
++                        cursor: progress !== null ? 'not-allowed' : 'pointer',
++                        color: downloadError ? 'var(--error)' : 'var(--accent)',
++                        opacity: progress !== null && !downloadError ? 0.55 : 1,
++                        display: 'flex',
++                        alignItems: 'center',
++                    }}
++                >
+                     <FileDown size={20} />
+                 </button>
+             </div>
+@@ -35,21 +91,39 @@ const DocumentCard: React.FC<{ doc: any }> = ({ doc }) => {
+             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+                     <Calendar size={14} />
+-                    {new Date(doc.created_at).toLocaleDateString()}
++                    {new Date(doc.created_at).toLocaleDateString('it-IT')}
+                 </div>
+                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+                     <User size={14} />
+-                    Proprietario ID: {doc.owner_id.slice(0, 8)}...
++                    {String(doc.owner_id).slice(0, 8)}ÔÇª
+                 </div>
+             </div>
+ 
+             <div style={{ marginTop: '1rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                 {doc.doc_metadata?.tags?.map((tag: string) => (
+-                    <span key={tag} style={{ background: 'var(--primary)', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.75rem' }}>
++                    <span
++                        key={tag}
++                        style={{ background: 'var(--primary)', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.75rem' }}
++                    >
+                         {tag}
+                     </span>
+                 ))}
+             </div>
++
++            {/* Streaming download progress bar */}
++            {progress !== null && (
++                <div className="download-progress-bar">
++                    <div
++                        className={`download-progress-fill${downloadError ? ' download-progress-error' : ''}`}
++                        style={{ width: downloadError ? '100%' : `${progress}%` }}
++                    />
++                </div>
++            )}
++            {downloadError && (
++                <p style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', color: 'var(--error)' }}>
++                    Download fallito. Riprova.
++                </p>
++            )}
+         </div>
+     );
+ };
+diff --git a/frontend/src/components/Pagination.tsx b/frontend/src/components/Pagination.tsx
+new file mode 100644
+index 0000000..992ec05
+--- /dev/null
++++ b/frontend/src/components/Pagination.tsx
+@@ -0,0 +1,84 @@
++import React from 'react';
++
++type PageItem = number | 'ellipsis';
++
++/**
++ * Generates the sequence of page numbers to display.
++ * Always shows: first page, current ┬▒1, last page, with ellipsis in gaps.
++ *
++ * Examples (current=5, total=10):
++ *   [1, 'ellipsis', 4, 5, 6, 'ellipsis', 10]
++ */
++function getPageItems(current: number, total: number): PageItem[] {
++    if (total <= 1) return [1];
++    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
++
++    const items: PageItem[] = [1];
++
++    if (current > 3) items.push('ellipsis');
++
++    const start = Math.max(2, current - 1);
++    const end = Math.min(total - 1, current + 1);
++    for (let p = start; p <= end; p++) items.push(p);
++
++    if (current < total - 2) items.push('ellipsis');
++
++    items.push(total);
++    return items;
++}
++
++interface Props {
++    currentPage: number;
++    totalPages: number;
++    total: number;
++    onPageChange: (page: number) => void;
++}
++
++const Pagination: React.FC<Props> = ({ currentPage, totalPages, total, onPageChange }) => {
++    if (total === 0) return null;
++
++    const pages = getPageItems(currentPage, totalPages);
++
++    return (
++        <nav className="pagination" aria-label="Navigazione pagine">
++            <button
++                className="pagination-btn"
++                onClick={() => onPageChange(currentPage - 1)}
++                disabled={currentPage === 1}
++                aria-label="Pagina precedente"
++            >
++                ÔåÉ
++            </button>
++
++            {pages.map((p, i) =>
++                p === 'ellipsis' ? (
++                    <span key={`ell-${i}`} className="pagination-ellipsis">ÔÇª</span>
++                ) : (
++                    <button
++                        key={p}
++                        className={`pagination-btn${p === currentPage ? ' pagination-btn--active' : ''}`}
++                        onClick={() => onPageChange(p)}
++                        aria-current={p === currentPage ? 'page' : undefined}
++                    >
++                        {p}
++                    </button>
++                )
++            )}
++
++            <button
++                className="pagination-btn"
++                onClick={() => onPageChange(currentPage + 1)}
++                disabled={currentPage >= totalPages}
++                aria-label="Pagina successiva"
++            >
++                ÔåÆ
++            </button>
++
++            <span className="pagination-info">
++                {total} document{total !== 1 ? 'i' : 'o'}
++            </span>
++        </nav>
++    );
++};
++
++export default Pagination;
+diff --git a/frontend/src/index.css b/frontend/src/index.css
+index 9b1698f..814b110 100644
+--- a/frontend/src/index.css
++++ b/frontend/src/index.css
+@@ -122,12 +122,23 @@ body {
+ .skeleton-meta-short  { width: 50%; height: 0.85rem; }
+ .skeleton-badge       { width: 4rem; height: 1.4rem; border-radius: 999px; margin-bottom: 0; }
+ 
+-/* ÔöÇÔöÇ Paginazione ÔöÇÔöÇ */
++/* ÔöÇÔöÇ Transizione cambio pagina ÔöÇÔöÇ */
++@keyframes pageEnter {
++  from { opacity: 0; transform: translateY(10px); }
++  to   { opacity: 1; transform: translateY(0); }
++}
++
++.doc-grid {
++  animation: pageEnter 0.22s ease;
++}
++
++/* ÔöÇÔöÇ Paginazione numerata ÔöÇÔöÇ */
+ .pagination {
+   display: flex;
+   justify-content: center;
+   align-items: center;
+-  gap: 1rem;
++  flex-wrap: wrap;
++  gap: 0.4rem;
+   margin-top: 2.5rem;
+   padding-bottom: 2rem;
+ }
+@@ -135,27 +146,64 @@ body {
+ .pagination-btn {
+   background: transparent;
+   color: var(--accent);
+-  border: 1px solid var(--accent);
+-  padding: 0.5rem 1.25rem;
+-  border-radius: 0.5rem;
++  border: 1px solid rgba(56, 189, 248, 0.35);
++  padding: 0.4rem 0.8rem;
++  border-radius: 0.4rem;
+   cursor: pointer;
+   font-weight: 600;
+-  transition: all 0.2s;
++  font-size: 0.875rem;
++  transition: background 0.15s, color 0.15s, border-color 0.15s;
++  min-width: 2.2rem;
++  text-align: center;
+ }
+ 
+ .pagination-btn:hover:not(:disabled) {
+   background: var(--accent);
+   color: var(--bg-dark);
++  border-color: var(--accent);
+ }
+ 
+ .pagination-btn:disabled {
+-  opacity: 0.35;
++  opacity: 0.3;
+   cursor: not-allowed;
+ }
+ 
++.pagination-btn--active {
++  background: var(--accent);
++  color: var(--bg-dark);
++  border-color: var(--accent);
++  cursor: default;
++}
++
++.pagination-ellipsis {
++  color: var(--text-muted);
++  padding: 0 0.2rem;
++  font-size: 0.875rem;
++  user-select: none;
++}
++
+ .pagination-info {
+   color: var(--text-muted);
+-  font-size: 0.9rem;
+-  min-width: 10ch;
+-  text-align: center;
++  font-size: 0.8rem;
++  margin-left: 0.5rem;
++}
++
++/* ÔöÇÔöÇ Download progress bar ÔöÇÔöÇ */
++.download-progress-bar {
++  height: 3px;
++  background: var(--glass);
++  border-radius: 999px;
++  margin-top: 0.75rem;
++  overflow: hidden;
++}
++
++.download-progress-fill {
++  height: 100%;
++  background: var(--accent);
++  border-radius: 999px;
++  transition: width 0.18s ease;
++}
++
++.download-progress-error {
++  background: var(--error);
+ }
+diff --git a/frontend/src/pages/DashboardPage.tsx b/frontend/src/pages/DashboardPage.tsx
+index 029c3b5..24a6890 100644
+--- a/frontend/src/pages/DashboardPage.tsx
++++ b/frontend/src/pages/DashboardPage.tsx
+@@ -2,11 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
+ import { useQuery } from '@tanstack/react-query';
+ import api from '../services/api';
+ import { useAuth } from '../store/AuthContext';
+-import { Search, LogOut, Upload as UploadIcon, FileText } from 'lucide-react';
++import { Search, LogOut, Upload as UploadIcon, FileText, BarChart2 } from 'lucide-react';
+ import DocumentCard from '../components/DocumentCard';
+ import SkeletonCard from '../components/SkeletonCard';
++import Pagination from '../components/Pagination';
+ import UploadModal from '../components/UploadModal';
+ import BulkUploadModal from '../components/BulkUploadModal';
++import CacheStatsModal from '../components/CacheStatsModal';
+ 
+ const ITEMS_PER_PAGE = 20;
+ const SKELETON_COUNT = 6;
+@@ -24,13 +26,12 @@ const DashboardPage: React.FC = () => {
+     const [currentPage, setCurrentPage] = useState(1);
+     const [isUploadOpen, setIsUploadOpen] = useState(false);
+     const [isBulkOpen, setIsBulkOpen] = useState(false);
++    const [isStatsOpen, setIsStatsOpen] = useState(false);
+     const { logout } = useAuth();
+ 
+     // Debounce search input (500ms delay)
+     useEffect(() => {
+-        const timer = setTimeout(() => {
+-            setDebouncedQuery(inputValue);
+-        }, 500);
++        const timer = setTimeout(() => setDebouncedQuery(inputValue), 500);
+         return () => clearTimeout(timer);
+     }, [inputValue]);
+ 
+@@ -79,10 +80,10 @@ const DashboardPage: React.FC = () => {
+                     <FileText className="primary" />
+                     <h1 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Documentale</h1>
+                 </div>
+-                <div style={{ display: 'flex', gap: '1rem' }}>
++                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                     <button className="btn" style={{ width: 'auto' }} onClick={() => setIsBulkOpen(true)}>
+                         <UploadIcon size={18} style={{ marginRight: '0.5rem' }} />
+-                        Carica Intera Cartella
++                        Carica Cartella
+                     </button>
+                     <button
+                         className="btn"
+@@ -92,6 +93,14 @@ const DashboardPage: React.FC = () => {
+                         <UploadIcon size={18} style={{ marginRight: '0.5rem' }} />
+                         Carica File
+                     </button>
++                    <button
++                        className="btn"
++                        style={{ width: 'auto', background: 'transparent', border: '1px solid var(--glass)', color: 'var(--text-muted)' }}
++                        onClick={() => setIsStatsOpen(true)}
++                        title="Statistiche cache Redis"
++                    >
++                        <BarChart2 size={18} />
++                    </button>
+                     <button
+                         className="btn"
+                         style={{ width: 'auto', background: 'transparent', border: '1px solid var(--glass)' }}
+@@ -108,7 +117,7 @@ const DashboardPage: React.FC = () => {
+                     <input
+                         className="input"
+                         style={{ paddingLeft: '3rem', marginBottom: 0 }}
+-                        placeholder="Cerca documenti per titolo, tag o contenuto..."
++                        placeholder="Cerca documenti per titolo, tag o contenutoÔÇª"
+                         value={inputValue}
+                         onChange={handleSearchChange}
+                     />
+@@ -122,7 +131,8 @@ const DashboardPage: React.FC = () => {
+                     </div>
+                 ) : (
+                     <>
+-                        <div className="doc-grid">
++                        {/* key forces CSS page-enter animation on page/query change */}
++                        <div className="doc-grid" key={`${currentPage}-${debouncedQuery}`}>
+                             {documents.map((doc: any) => (
+                                 <DocumentCard key={doc.id} doc={doc} />
+                             ))}
+@@ -133,47 +143,24 @@ const DashboardPage: React.FC = () => {
+                             )}
+                         </div>
+ 
+-                        {total > 0 && (
+-                            <div className="pagination">
+-                                <button
+-                                    className="pagination-btn"
+-                                    onClick={() => setCurrentPage(p => p - 1)}
+-                                    disabled={currentPage === 1}
+-                                >
+-                                    ÔåÉ Precedente
+-                                </button>
+-                                <span className="pagination-info">
+-                                    Pagina {currentPage} di {totalPages}
+-                                    <br />
+-                                    <span style={{ fontSize: '0.78rem' }}>
+-                                        {total} document{total !== 1 ? 'i' : 'o'}
+-                                    </span>
+-                                </span>
+-                                <button
+-                                    className="pagination-btn"
+-                                    onClick={() => setCurrentPage(p => p + 1)}
+-                                    disabled={currentPage >= totalPages}
+-                                >
+-                                    Successiva ÔåÆ
+-                                </button>
+-                            </div>
+-                        )}
++                        <Pagination
++                            currentPage={currentPage}
++                            totalPages={totalPages}
++                            total={total}
++                            onPageChange={setCurrentPage}
++                        />
+                     </>
+                 )}
+             </main>
+ 
+             {isUploadOpen && (
+-                <UploadModal
+-                    onClose={() => setIsUploadOpen(false)}
+-                    onSuccess={handleUploadSuccess}
+-                />
++                <UploadModal onClose={() => setIsUploadOpen(false)} onSuccess={handleUploadSuccess} />
+             )}
+-
+             {isBulkOpen && (
+-                <BulkUploadModal
+-                    onClose={() => setIsBulkOpen(false)}
+-                    onSuccess={handleBulkSuccess}
+-                />
++                <BulkUploadModal onClose={() => setIsBulkOpen(false)} onSuccess={handleBulkSuccess} />
++            )}
++            {isStatsOpen && (
++                <CacheStatsModal onClose={() => setIsStatsOpen(false)} />
+             )}
+         </div>
+     );

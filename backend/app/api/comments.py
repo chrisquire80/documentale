@@ -10,6 +10,7 @@ from ..models.document import Document
 from ..models.comment import DocumentComment
 from ..schemas.comment_schemas import CommentCreate, CommentResponse
 from ..api.auth import get_current_user
+from ..api.ws import manager
 
 router = APIRouter(prefix="/documents", tags=["comments"])
 
@@ -70,6 +71,17 @@ async def create_comment(
     # Reload with user relationship
     stmt = select(DocumentComment).options(selectinload(DocumentComment.user)).where(DocumentComment.id == comment.id)
     loaded_comment = (await db.execute(stmt)).scalar_one()
+
+    # Notify document owner if someone else commented
+    if doc.owner_id != current_user.id:
+        await manager.send_personal_message(
+            {
+                "type": "NEW_COMMENT",
+                "message": f"{current_user.email} ha commentato sul tuo documento '{doc.title}'.",
+                "doc_id": str(doc.id)
+            },
+            doc.owner_id
+        )
 
     return CommentResponse(
         id=loaded_comment.id,

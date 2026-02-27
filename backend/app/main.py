@@ -30,7 +30,7 @@ app.add_middleware(
     expose_headers=["Content-Length", "Content-Disposition"],
 )
 
-from .api import auth, documents, admin, shares, comments
+from .api import auth, documents, admin, shares, comments, ws
 from .services import watcher
 from .models.share import DocumentShare
 from .models.comment import DocumentComment
@@ -40,6 +40,7 @@ app.include_router(documents.router)
 app.include_router(admin.router)
 app.include_router(shares.router)
 app.include_router(comments.router)
+app.include_router(ws.router)
 
 
 @app.on_event("startup")
@@ -49,8 +50,9 @@ async def startup():
     for attempt in range(max_retries):
         try:
             async with engine.begin() as conn:
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
                 await conn.run_sync(Base.metadata.create_all)
-            print("Database: tabelle create/verificate con successo.")
+            print("Database: tabelle create/verificate con successo, pgvector abilitato.")
             break
         except Exception as e:
             if attempt < max_retries - 1:

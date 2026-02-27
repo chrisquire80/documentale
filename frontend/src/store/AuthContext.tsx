@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import api from '../services/api';
 
+const BASE_WS_URL = (import.meta.env.VITE_API_URL as string)?.replace('http', 'ws') || 'ws://localhost:8000';
+
 export type UserRole = 'admin' | 'power_user' | 'reader';
 
 interface CurrentUser {
@@ -25,6 +27,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
     const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(true);
+    const [toasts, setToasts] = useState<{ id: number, message: string }[]>([]);
+
+    const addToast = (msg: string) => {
+        const id = Date.now();
+        setToasts(prev => [...prev, { id, message: msg }]);
+        setTimeout(() => {
+            setToasts(prev => prev.filter(t => t.id !== id));
+        }, 5000);
+    };
+
+    useEffect(() => {
+        let ws: WebSocket | null = null;
+        const token = localStorage.getItem('token');
+
+        if (isAuthenticated && token) {
+            ws = new WebSocket(`${BASE_WS_URL}/ws/${token}`);
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'NEW_COMMENT' || data.type === 'NOTIFICATION') {
+                        addToast(data.message);
+                    }
+                } catch (e) {
+                    console.error("WS Parse error", e);
+                }
+            };
+
+            ws.onerror = (e) => console.error("WS Error", e);
+        }
+
+        return () => {
+            if (ws) ws.close();
+        };
+    }, [isAuthenticated]);
 
     const fetchMe = async () => {
         try {
@@ -53,7 +90,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const logout = () => {
         // Invalida il token server-side nella blacklist Redis — fire-and-forget
-        api.post('/auth/logout').catch(() => {});
+        api.post('/auth/logout').catch(() => { });
         localStorage.removeItem('token');
         setIsAuthenticated(false);
         setCurrentUser(null);
@@ -62,6 +99,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return (
         <AuthContext.Provider value={{ isAuthenticated, currentUser, login, logout, isLoading }}>
             {children}
+
+            {/* Toast Container */}
+            <div style={{
+                position: 'fixed', bottom: '20px', right: '20px', zIndex: 9999,
+                display: 'flex', flexDirection: 'column', gap: '10px'
+            }}>
+                {toasts.map(t => (
+                    <div key={t.id} style={{
+                        background: 'var(--accent)', color: 'var(--bg-dark)', padding: '12px 20px',
+                        borderRadius: '0.5rem', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.5)',
+                        borderLeft: '4px solid white', fontWeight: 600, fontSize: '0.9rem',
+                        transition: 'all 0.3s ease-out'
+                    }}>
+                        {t.message}
+                    </div>
+                ))}
+            </div>
         </AuthContext.Provider>
     );
 };

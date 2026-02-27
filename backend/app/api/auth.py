@@ -15,12 +15,13 @@ from ..schemas.doc_schemas import Token, UserLogin, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 
 _BLACKLIST_PREFIX = "blacklist:"
 
 
 async def get_current_user(
+    request: Request,
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
@@ -30,6 +31,10 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    token = token or request.query_params.get("token")
+    if not token:
+        raise credentials_exception
 
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
@@ -83,6 +88,10 @@ async def logout(
     Invalida il token JWT inserendolo nella blacklist Redis con TTL pari al
     tempo residuo. Anche senza Redis il client rimuove il token localmente.
     """
+    token = token or request.query_params.get("token")
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
     if redis:
         try:
             payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])

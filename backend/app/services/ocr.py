@@ -44,7 +44,10 @@ async def extract_text(file_path: str, content_type: str) -> str:
         if content_type.startswith("image/"):
             return await _extract_image(file_path)
 
-        # Tipi non supportati (docx, ecc.) → stringa vuota per ora
+        if content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" or content_type == "application/msword":
+            return await _extract_docx(file_path)
+
+        # Tipi non supportati → stringa vuota per ora
         return ""
 
     except Exception as exc:  # noqa: BLE001
@@ -110,5 +113,20 @@ async def _extract_image(path: str) -> str:
 
         img = Image.open(path)
         return pytesseract.image_to_string(img, lang="ita").strip()
+
+    return await asyncio.get_event_loop().run_in_executor(None, _sync)
+
+
+async def _extract_docx(path: str) -> str:
+    """Estrae testo da file Word (.docx) usando python-docx."""
+
+    def _sync() -> str:
+        try:
+            from docx import Document
+            doc = Document(path)
+            return "\n".join([para.text for para in doc.paragraphs]).strip()
+        except Exception as exc:
+            logger.warning("Estrazione DOCX fallita per '%s': %s", path, exc)
+            return ""
 
     return await asyncio.get_event_loop().run_in_executor(None, _sync)

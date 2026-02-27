@@ -8,7 +8,7 @@ import aiofiles
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Form, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update as sa_update, or_, and_, distinct, func
+from sqlalchemy import select, update as sa_update, or_, and_, distinct, func, cast
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from uuid import UUID
@@ -17,6 +17,7 @@ from ..db import get_db, SessionLocal
 from ..models.user import User, UserRole
 from ..models.document import Document, DocumentVersion, DocumentMetadata, DocumentContent
 from ..models.audit import AuditLog
+from pgvector.sqlalchemy import Vector
 from ..schemas.doc_schemas import DocumentResponse, DocumentCreate, DocumentVersionResponse, PaginatedDocuments, DocumentUpdate, BulkExportRequest
 from ..api.auth import get_current_user
 from ..core.storage import get_storage, StorageLayer, LocalStorage
@@ -38,13 +39,15 @@ async def _run_ocr_background(
     file_rel_path: str,
     content_type: str,
     initial_corpus: str,
+    run_llm: bool = True,
 ) -> None:
     """
     Eseguito dopo la risposta HTTP: estrae il testo dal file via OCR
-    e aggiorna DocumentContent.fulltext_content.
-    Il trigger PostgreSQL aggiornerà search_vector automaticamente.
+    e aggiorna DocumentContent.fulltext_content. Se run_llm è True, analizza con Gemini.
     """
     from ..services.ocr import extract_text
+    from ..services.llm_metadata import extract_metadata_from_text
+    from ..services.embeddings import generate_embedding
 
     storage = LocalStorage()
     abs_path = await storage.get_file_path(file_rel_path)
@@ -54,17 +57,46 @@ async def _run_ocr_background(
         return
 
     merged = f"{initial_corpus} {ocr_text}".strip()
+    
+    ai_metadata = None
+    ai_embedding = None
+    if run_llm:
+        ai_metadata = await extract_metadata_from_text(merged)
+        ai_embedding = await generate_embedding(merged)
 
     async with SessionLocal() as db:
         try:
+            update_values = {"fulltext_content": merged}
+            if ai_embedding is not None:
+                update_values["embedding"] = ai_embedding
+
             stmt = (
                 sa_update(DocumentContent)
                 .where(DocumentContent.document_id == doc_id)
-                .values(fulltext_content=merged)
+                .values(**update_values)
             )
             await db.execute(stmt)
+            
+            if ai_metadata:
+                meta_stmt = select(DocumentMetadata).where(DocumentMetadata.document_id == doc_id)
+                meta = (await db.execute(meta_stmt)).scalar_one_or_none()
+                if meta:
+                    current_json = meta.metadata_json or {}
+                    
+                    existing_tags = set(current_json.get("tags", []))
+                    ai_tags = set(ai_metadata.get("tags", []))
+                    current_json["tags"] = list(existing_tags.union(ai_tags))
+                    
+                    if not current_json.get("dept") and ai_metadata.get("department"):
+                        if ai_metadata["department"] != "Generale":
+                            current_json["dept"] = ai_metadata["department"]
+                            
+                    # Trigger column update
+                    # For a top-level mutation we assign a new dict to trigger SQLAlchemy's JSON update tracking
+                    meta.metadata_json = dict(current_json)
+
             await db.commit()
-            logger.info("OCR completata per documento %s (%d chars).", doc_id, len(merged))
+            logger.info("OCR/LLM completata per documento %s (%d chars).", doc_id, len(merged))
         except Exception as exc:
             await db.rollback()
             logger.warning("Aggiornamento FTS fallito per %s: %s", doc_id, exc)
@@ -228,6 +260,7 @@ async def update_document(
                 ver.file_path,
                 mime_type,
                 initial_corpus,
+                run_llm=False
             )
             
             # Temporary set the corpus to just the metadata until OCR finishes, or just wait.
@@ -288,11 +321,22 @@ async def search_documents(
 
     if query:
         need_content_join = True
+        
+        # Genera embedding per la query
+        from ..services.embeddings import generate_query_embedding
+        query_emb = await generate_query_embedding(query)
+        
         fts_condition = and_(
             DocumentContent.search_vector.isnot(None),
             DocumentContent.search_vector.op("@@")(func.plainto_tsquery("italian", query)),
         )
-        filters.append(or_(fts_condition, Document.title.ilike(f"%{query}%")))
+        
+        if query_emb:
+            # Distanza coseno < 0.65 equivale a similarità > 0.35 (buono per Gemini)
+            semantic_condition = DocumentContent.embedding.cosine_distance(cast(query_emb, Vector)) < 0.65
+            filters.append(or_(fts_condition, Document.title.ilike(f"%{query}%"), semantic_condition))
+        else:
+            filters.append(or_(fts_condition, Document.title.ilike(f"%{query}%")))
 
     if tag:
         need_meta_join = True
@@ -318,6 +362,13 @@ async def search_documents(
         stmt = stmt.outerjoin(Document.metadata_entries)
     if filters:
         stmt = stmt.where(*filters)
+        
+    # Ordina per rilevanza semantica se c'è una query
+    if query and 'query_emb' in locals() and query_emb:
+        stmt = stmt.order_by(DocumentContent.embedding.cosine_distance(cast(query_emb, Vector)))
+    else:
+        stmt = stmt.order_by(Document.created_at.desc())
+        
     stmt = stmt.offset(offset).limit(limit)
 
     documents = list((await db.execute(stmt)).scalars().unique().all())

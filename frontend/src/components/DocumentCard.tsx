@@ -1,7 +1,8 @@
 import React, { useState, useCallback } from 'react';
-import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare } from 'lucide-react';
+import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History } from 'lucide-react';
 import DocumentPreviewModal from './DocumentPreviewModal';
 import EditMetadataModal from './EditMetadataModal';
+import DocumentVersionModal from './DocumentVersionModal';
 import ShareModal from './ShareModal';
 import CommentsPanel from './CommentsPanel';
 import { useAuth } from '../store/AuthContext';
@@ -22,8 +23,9 @@ const DocumentCard: React.FC<{
     const [editOpen, setEditOpen] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
     const [commentsOpen, setCommentsOpen] = useState(false);
+    const [versionOpen, setVersionOpen] = useState(false);
 
-    const canEdit = currentUser?.role === 'ADMIN' || currentUser?.id === doc.owner_id;
+    const canEdit = (currentUser?.role as string) === 'ADMIN' || currentUser?.id === doc.owner_id;
 
     const handleDownload = useCallback(async () => {
         setProgress(0);
@@ -151,6 +153,21 @@ const DocumentCard: React.FC<{
                         </button>
                     )}
                     <button
+                        onClick={() => setVersionOpen(true)}
+                        title="Storico Versioni"
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: 'var(--text-muted)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: 0
+                        }}
+                    >
+                        <History size={18} />
+                    </button>
+                    <button
                         onClick={handleDownload}
                         disabled={progress !== null}
                         title={downloadError ? 'Download fallito' : 'Scarica'}
@@ -270,6 +287,14 @@ const DocumentCard: React.FC<{
                     docId={doc.id}
                     docTitle={doc.title}
                     onClose={() => setCommentsOpen(false)}
+                />
+            )}
+
+            {versionOpen && (
+                <DocumentVersionModal
+                    isOpen={versionOpen}
+                    onClose={() => setVersionOpen(false)}
+                    doc={doc}
                 />
             )}
         </div>

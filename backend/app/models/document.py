@@ -1,6 +1,7 @@
 from sqlalchemy import Column, String, Integer, UUID, ForeignKey, DateTime, Boolean, JSON, func, Table, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
+from pgvector.sqlalchemy import Vector
 import uuid
 from ..db import Base
 
@@ -70,11 +71,11 @@ class DocumentContent(Base):
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), primary_key=True)
     fulltext_content = Column(String, nullable=True)
     search_vector = Column(TSVECTOR)
-    # embedding = Column(Vector(1536)) # Will require pgvector installation in migration
+    embedding = Column(Vector(768)) # Gemini text-embedding dimensions
 
     document = relationship("Document", back_populates="content")
 
-    # GIN index for fast full-text search on the tsvector column
     __table_args__ = (
         Index('idx_search_vector_gin', 'search_vector', postgresql_using='gin'),
+        Index('idx_embedding_hnsw', 'embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'embedding': 'vector_cosine_ops'}),
     )
