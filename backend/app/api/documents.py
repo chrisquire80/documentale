@@ -26,6 +26,7 @@ from ..schemas.doc_schemas import (
     DocumentUpdate, BulkExportRequest, DocumentShareCreate, DocumentShareResponse,
 )
 from ..api.auth import get_current_user
+from ..api.ws import manager
 from ..core.storage import get_storage, StorageLayer, LocalStorage
 from ..core.cache import get_redis
 from ..core.rate_limit import limiter
@@ -140,6 +141,21 @@ async def _run_ocr_background(
 
             await db.commit()
             logger.info("OCR/LLM completata per documento %s (%d chars).", doc_id, len(merged))
+
+            # Notifica completamento al Frontend
+            # Ottieni info minime per la UI (il doc_id ci e' noto)
+            owner_stmt = select(Document).where(Document.id == doc_id)
+            doc_info = (await db.execute(owner_stmt)).scalar_one_or_none()
+            if doc_info:
+                await manager.send_personal_message(
+                    {
+                        "type": "UPLOAD_COMPLETE",
+                        "message": f"Caricamento OCR ed elaborazione AI del documento '{doc_info.title}' completati correttamente.",
+                        "doc_id": str(doc_id)
+                    },
+                    doc_info.owner_id
+                )
+
         except Exception as exc:
             await db.rollback()
             logger.warning("Background OCR/tag fallito per %s: %s", doc_id, exc)
@@ -207,6 +223,82 @@ async def upload_document(
     )
     await _invalidate_user_cache(redis, current_user.id)
 
+    await db.refresh(doc, ["metadata_entries", "owner"])
+    return doc
+
+
+# ── Nuova Versione ────────────────────────────────────────────────────────────
+
+@router.post("/{doc_id}/versions", response_model=DocumentResponse)
+@limiter.limit("20/minute")
+async def upload_document_version(
+    doc_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    storage: StorageLayer = Depends(get_storage),
+    redis=Depends(get_redis),
+):
+    stmt = select(Document).options(selectinload(Document.metadata_entries)).where(Document.id == doc_id, Document.deleted_at.is_(None))
+    doc = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found or in trash")
+
+    if current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    allowed_types = [
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "text/plain",
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+    ]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Tipo file non consentito.")
+
+    file_rel_path = await storage.save_file(file.file, file.filename)
+    
+    doc.current_version += 1
+    doc.file_type = file.content_type
+    
+    db.add(DocumentVersion(document_id=doc.id, version_num=doc.current_version, file_path=file_rel_path))
+    
+    if doc.metadata_entries:
+        metadata_data = doc.metadata_entries[0].metadata_json
+    else:
+        metadata_data = {}
+
+    tags_text = " ".join(metadata_data.get("tags", []))
+    author_text = metadata_data.get("author", "")
+    dept_text = metadata_data.get("dept", "")
+    initial_corpus = " ".join(filter(None, [doc.title, author_text, dept_text, tags_text]))
+    
+    db.add(AuditLog(user_id=current_user.id, action="NEW_VERSION", target_id=doc.id))
+    
+    await db.commit()
+
+    # Notifica di caricamento nuova versione all'owner se a farlo è stato un admin
+    if doc.owner_id != current_user.id:
+        await manager.send_personal_message(
+            {
+                "type": "DOC_MODIFIED",
+                "message": f"Una nuova versione del documento '{doc.title}' e' stata caricata da {current_user.email}.",
+                "doc_id": str(doc.id)
+            },
+            doc.owner_id
+        )
+
+    background_tasks.add_task(
+        _run_ocr_background, doc.id, file_rel_path, file.content_type, initial_corpus
+    )
+    await _invalidate_user_cache(redis, current_user.id)
     await db.refresh(doc, ["metadata_entries", "owner"])
     return doc
 
@@ -286,6 +378,17 @@ async def update_document(
     await db.commit()
     await db.refresh(doc, ["metadata_entries", "owner"])
 
+    # Notifica modifica se eseguita da un altro utente diverso dal proprietario
+    if doc.owner_id != current_user.id:
+        await manager.send_personal_message(
+            {
+                "type": "DOC_MODIFIED",
+                "message": f"Il documento '{doc.title}' e' stato aggiornato da {current_user.email}.",
+                "doc_id": str(doc.id)
+            },
+            doc.owner_id
+        )
+
     # Invalidate search cache
     if redis:
         try:
@@ -308,6 +411,8 @@ async def search_documents(
     file_type: Optional[str] = None,
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
+    author: Optional[str] = None,
+    department: Optional[str] = None,
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
@@ -317,7 +422,7 @@ async def search_documents(
     cache_key = (
         f"docs:{current_user.id}:"
         + hashlib.md5(
-            f"{query}:{tag}:{file_type}:{date_from}:{date_to}:{limit}:{offset}".encode()
+            f"{query}:{tag}:{file_type}:{date_from}:{date_to}:{author}:{department}:{limit}:{offset}".encode()
         ).hexdigest()
     )
     if redis:
@@ -379,6 +484,14 @@ async def search_documents(
     if date_to:
         filters.append(Document.created_at <= date_to)
 
+    if author:
+        need_meta_join = True
+        filters.append(DocumentMetadata.metadata_json["author"].astext.ilike(f"%{author}%"))
+
+    if department:
+        need_meta_join = True
+        filters.append(DocumentMetadata.metadata_json["dept"].astext == department)
+
     count_stmt = select(func.count(distinct(Document.id))).select_from(Document)
     if need_content_join:
         count_stmt = count_stmt.outerjoin(Document.content)
@@ -387,30 +500,63 @@ async def search_documents(
     count_stmt = count_stmt.where(*filters)
     total: int = (await db.execute(count_stmt)).scalar() or 0
 
-    stmt = (
-        select(Document)
-        .options(selectinload(Document.metadata_entries), selectinload(Document.owner))
-        .order_by(Document.created_at.desc())
-    )
-    if need_content_join:
-        stmt = stmt.outerjoin(Document.content)
-    if need_meta_join:
-        stmt = stmt.outerjoin(Document.metadata_entries)
-    if filters:
-        stmt = stmt.where(*filters)
-
+    # Definiamo cosa estrarre. Di base estraiamo solo l'oggetto Document
+    query_cols = [Document]
+    
     # Ordina per rilevanza semantica se c'è una query
-    if query and 'query_emb' in locals() and query_emb:
-        stmt = stmt.order_by(DocumentContent.embedding.cosine_distance(cast(query_emb, Vector)))
+    if query:
+        # Prepariamo l'espressione ts_headline
+        ts_headline_expr = func.ts_headline(
+            'italian',
+            DocumentContent.fulltext_content,
+            func.plainto_tsquery('italian', query),
+            'StartSel=<mark>, StopSel=</mark>, MaxWords=35, MinWords=15'
+        )
+        query_cols.append(ts_headline_expr.label('snippet'))
+        
+        stmt = select(*query_cols).options(
+            selectinload(Document.metadata_entries), selectinload(Document.owner)
+        )
+        if need_content_join:
+            stmt = stmt.outerjoin(Document.content)
+        if need_meta_join:
+            stmt = stmt.outerjoin(Document.metadata_entries)
+        if filters:
+            stmt = stmt.where(*filters)
+            
+        if 'query_emb' in locals() and query_emb:
+            stmt = stmt.order_by(DocumentContent.embedding.cosine_distance(cast(query_emb, Vector)))
+        else:
+            stmt = stmt.order_by(Document.created_at.desc())
     else:
-        stmt = stmt.order_by(Document.created_at.desc())
+        stmt = select(*query_cols).options(
+            selectinload(Document.metadata_entries), selectinload(Document.owner)
+        ).order_by(Document.created_at.desc())
+        
+        if need_content_join:
+            stmt = stmt.outerjoin(Document.content)
+        if need_meta_join:
+            stmt = stmt.outerjoin(Document.metadata_entries)
+        if filters:
+            stmt = stmt.where(*filters)
 
     stmt = stmt.offset(offset).limit(limit)
 
-    documents = list((await db.execute(stmt)).scalars().unique().all())
+    results = (await db.execute(stmt)).unique().all()
+    
+    parsed_items = []
+    for row in results:
+        doc_obj = row[0]
+        
+        # Manually attach highlight snippet to the sqlalchemy model dict output
+        # to feed the pydantic model cleanly
+        snippet = row.snippet if len(row) > 1 and row.snippet else None
+        setattr(doc_obj, 'highlight_snippet', snippet)
+        
+        parsed_items.append(DocumentResponse.model_validate(doc_obj))
 
     response = PaginatedDocuments(
-        items=[DocumentResponse.model_validate(d) for d in documents],
+        items=parsed_items,
         total=total,
         limit=limit,
         offset=offset,
@@ -424,6 +570,59 @@ async def search_documents(
 
     return response
 
+
+# ── Related Documents ────────────────────────────────────────────────────────
+
+@router.get("/{doc_id}/related", response_model=list[DocumentResponse])
+@limiter.limit("60/minute")
+async def get_related_documents(
+    doc_id: UUID,
+    limit: int = Query(5, ge=1, le=10),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Retrieve the source document's embedding
+    stmt = select(DocumentContent).where(DocumentContent.document_id == doc_id)
+    source_content = (await db.execute(stmt)).scalar_one_or_none()
+    
+    if not source_content or source_content.embedding is None:
+        return []
+        
+    filters = [
+        Document.id != doc_id,
+        Document.deleted_at.is_(None)
+    ]
+    
+    # RBAC filtering
+    if current_user.role != UserRole.ADMIN:
+        shared_ids = (
+            select(DocumentShare.document_id)
+            .where(DocumentShare.shared_with_id == current_user.id)
+            .scalar_subquery()
+        )
+        filters.append(
+            or_(
+                Document.is_restricted == False,
+                Document.owner_id == current_user.id,
+                Document.id.in_(shared_ids),
+            )
+        )
+        
+    # Similarity query
+    stmt = (
+        select(Document)
+        .join(DocumentContent)
+        .options(selectinload(Document.metadata_entries), selectinload(Document.owner))
+        .where(
+            *filters,
+            DocumentContent.embedding.cosine_distance(source_content.embedding) < 0.65
+        )
+        .order_by(DocumentContent.embedding.cosine_distance(source_content.embedding))
+        .limit(limit)
+    )
+    
+    related_docs = list((await db.execute(stmt)).scalars().unique().all())
+    return [DocumentResponse.model_validate(d) for d in related_docs]
 
 
 # ── Export Bulk (ZIP) ─────────────────────────────────────────────────────────

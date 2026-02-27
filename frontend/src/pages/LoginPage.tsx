@@ -14,7 +14,7 @@ const LoginPage: React.FC = () => {
         e.preventDefault();
         try {
             const response = await api.post('/auth/login', { email, password });
-            login(response.data.access_token);
+            login(response.data.access_token, response.data.refresh_token);
             navigate('/');
         } catch (err) {
             setError('Credenziali non valide');

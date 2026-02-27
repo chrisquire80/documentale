@@ -250,8 +250,13 @@ body {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .modal {
@@ -267,8 +272,15 @@ body {
 }
 
 @keyframes slideUp {
-  from { opacity: 0; transform: translateY(16px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .preview-modal {
@@ -338,8 +350,11 @@ body {
 
 /* ── Spin animation ── */
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
+
 .spin {
   animation: spin 0.7s linear infinite;
 }
@@ -369,4 +384,15 @@ body {
 
 .main-content {
   min-width: 0;
+}
+
+/* ── Highlight PostgreSQL ts_headline ── */
+mark {
+  background-color: rgba(234, 179, 8, 0.3);
+  /* Giallo semitrasparente */
+  color: #fde047;
+  /* Giallo brillante per miglior leggibilitò dark mode */
+  padding: 0 0.2rem;
+  border-radius: 0.2rem;
+  font-weight: 500;
 }

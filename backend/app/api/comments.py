@@ -37,6 +37,7 @@ async def get_comments(
         CommentResponse(
             id=c.id,
             document_id=c.document_id,
+            parent_id=c.parent_id,
             content=c.content,
             created_at=c.created_at,
             user={"id": c.user.id, "email": c.user.email}
@@ -62,7 +63,8 @@ async def create_comment(
     comment = DocumentComment(
         document_id=doc_id,
         user_id=current_user.id,
-        content=req.content.strip()
+        content=req.content.strip(),
+        parent_id=req.parent_id
     )
     db.add(comment)
     await db.commit()
@@ -86,6 +88,7 @@ async def create_comment(
     return CommentResponse(
         id=loaded_comment.id,
         document_id=loaded_comment.document_id,
+        parent_id=loaded_comment.parent_id,
         content=loaded_comment.content,
         created_at=loaded_comment.created_at,
         user={"id": loaded_comment.user.id, "email": loaded_comment.user.email}

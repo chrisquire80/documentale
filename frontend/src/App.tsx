@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import PublicDownloadPage from './pages/PublicDownloadPage';
 import TrashPage from './pages/TrashPage';
+import AdminPage from './pages/AdminPage';
 
 const queryClient = new QueryClient();
 
@@ -36,6 +37,14 @@ const AppContent: React.FC = () => {
         element={
           <ProtectedRoute>
             <TrashPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute>
+            <AdminPage />
           </ProtectedRoute>
         }
       />

@@ -1,12 +1,14 @@
 import React, { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2 } from 'lucide-react';
+import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2 } from 'lucide-react';
 import DocumentPreviewModal from './DocumentPreviewModal';
 import EditMetadataModal from './EditMetadataModal';
 import DocumentVersionModal from './DocumentVersionModal';
 import ShareModal from './ShareModal';
 import CommentsPanel from './CommentsPanel';
+import UploadModal from './UploadModal';
+import RelatedDocumentsModal from './RelatedDocumentsModal';
 import { useAuth } from '../store/AuthContext';
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:8000';
@@ -27,6 +29,8 @@ const DocumentCard: React.FC<{
     const [shareOpen, setShareOpen] = useState(false);
     const [commentsOpen, setCommentsOpen] = useState(false);
     const [versionOpen, setVersionOpen] = useState(false);
+    const [uploadVersionOpen, setUploadVersionOpen] = useState(false);
+    const [relatedOpen, setRelatedOpen] = useState(false);
 
     const canEdit = (currentUser?.role as string) === 'ADMIN' || currentUser?.id === doc.owner_id;
 
@@ -157,6 +161,23 @@ const DocumentCard: React.FC<{
                             <Pencil size={18} />
                         </button>
                     )}
+                    {canEdit && (
+                        <button
+                            onClick={() => setUploadVersionOpen(true)}
+                            title="Carica Nuova Versione"
+                            style={{
+                                background: 'none',
+                                border: 'none',
+                                cursor: 'pointer',
+                                color: 'var(--accent)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                padding: 0
+                            }}
+                        >
+                            <UploadIcon size={18} />
+                        </button>
+                    )}
                     <button
                         onClick={() => setVersionOpen(true)}
                         title="Storico Versioni"
@@ -171,6 +192,21 @@ const DocumentCard: React.FC<{
                         }}
                     >
                         <History size={18} />
+                    </button>
+                    <button
+                        onClick={() => setRelatedOpen(true)}
+                        title="Documenti Correlati"
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: 'var(--text-muted)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: 0
+                        }}
+                    >
+                        <Link2 size={18} />
                     </button>
                     {canEdit && (
                         <button
@@ -224,6 +260,22 @@ const DocumentCard: React.FC<{
                     {String(doc.owner_id).slice(0, 8)}…
                 </div>
             </div>
+
+            {/* Highlights snippet */}
+            {doc.highlight_snippet && (
+                <div
+                    style={{
+                        marginTop: '0.75rem',
+                        fontSize: '0.875rem',
+                        color: 'var(--text-muted)',
+                        fontStyle: 'italic',
+                        background: 'var(--glass)',
+                        padding: '0.5rem',
+                        borderRadius: '0.25rem'
+                    }}
+                    dangerouslySetInnerHTML={{ __html: doc.highlight_snippet }}
+                />
+            )}
 
             <div style={{ marginTop: '1rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                 {doc.doc_metadata?.tags?.map((tag: string) => (
@@ -323,6 +375,17 @@ const DocumentCard: React.FC<{
                     isOpen={versionOpen}
                     onClose={() => setVersionOpen(false)}
                     doc={doc}
+                />
+            )}
+
+            {uploadVersionOpen && (
+                <UploadModal
+                    onClose={() => setUploadVersionOpen(false)}
+                    onSuccess={() => {
+                        setUploadVersionOpen(false);
+                        if (onUpdate) onUpdate();
+                    }}
+                    targetDocId={doc.id}
                 />
             )}
         </div>

@@ -16,7 +16,7 @@ interface CurrentUser {
 interface AuthContextType {
     isAuthenticated: boolean;
     currentUser: CurrentUser | null;
-    login: (token: string) => void;
+    login: (token: string, refreshToken: string) => void;
     logout: () => void;
     isLoading: boolean;
 }
@@ -47,7 +47,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    if (data.type === 'NEW_COMMENT' || data.type === 'NOTIFICATION') {
+                    const supportedTypes = ['NEW_COMMENT', 'NOTIFICATION', 'UPLOAD_COMPLETE', 'DOC_MODIFIED'];
+
+                    if (supportedTypes.includes(data.type)) {
                         addToast(data.message);
                     }
                 } catch (e) {
@@ -82,8 +84,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, []);
 
-    const login = (token: string) => {
+    const login = (token: string, refreshToken: string) => {
         localStorage.setItem('token', token);
+        localStorage.setItem('refreshToken', refreshToken);
         setIsAuthenticated(true);
         fetchMe();
     };
@@ -92,6 +95,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Invalida il token server-side nella blacklist Redis — fire-and-forget
         api.post('/auth/logout').catch(() => { });
         localStorage.removeItem('token');
+        localStorage.removeItem('refreshToken');
         setIsAuthenticated(false);
         setCurrentUser(null);
     };

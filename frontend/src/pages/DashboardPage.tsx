@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import api from '../services/api';
 import { useAuth } from '../store/AuthContext';
-import { Search, LogOut, Upload as UploadIcon, FileText, BarChart2, Trash2, Database } from 'lucide-react';
+import { Search, LogOut, Upload as UploadIcon, FileText, BarChart2, Trash2, Database, Shield } from 'lucide-react';
 import DocumentCard from '../components/DocumentCard';
 import SkeletonCard from '../components/SkeletonCard';
 import Pagination from '../components/Pagination';
@@ -11,6 +11,7 @@ import BulkUploadModal from '../components/BulkUploadModal';
 import CacheStatsModal from '../components/CacheStatsModal';
 import DashboardStatsModal from '../components/DashboardStatsModal';
 import SidebarFilters from '../components/SidebarFilters';
+import type { FilterState } from '../components/SidebarFilters';
 import BulkActionBar from '../components/BulkActionBar';
 
 const ITEMS_PER_PAGE = 20;
@@ -24,10 +25,17 @@ interface PaginatedDocuments {
 }
 
 const DashboardPage: React.FC = () => {
-    const queryClient = useQueryClient();
+
     const [inputValue, setInputValue] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
-    const [selectedTag, setSelectedTag] = useState<string | null>(null);
+    const [filters, setFilters] = useState<FilterState>({
+        tag: null,
+        file_type: null,
+        date_from: null,
+        date_to: null,
+        author: null,
+        department: null
+    });
     const [currentPage, setCurrentPage] = useState(1);
     const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
 
@@ -35,7 +43,7 @@ const DashboardPage: React.FC = () => {
     const [isBulkOpen, setIsBulkOpen] = useState(false);
     const [isStatsOpen, setIsStatsOpen] = useState(false);
     const [isDocStatsOpen, setIsDocStatsOpen] = useState(false);
-    const { logout } = useAuth();
+    const { currentUser, logout } = useAuth();
 
     // Debounce
     useEffect(() => {
@@ -43,22 +51,28 @@ const DashboardPage: React.FC = () => {
         return () => clearTimeout(timer);
     }, [inputValue]);
 
-    // Reset to page 1 whenever the search term or tag changes
+    // Reset to page 1 whenever the search term or filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [debouncedQuery, selectedTag]);
+    }, [debouncedQuery, filters]);
 
     const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
     const { data, isLoading, refetch } = useQuery<PaginatedDocuments>({
-        queryKey: ['documents', debouncedQuery, selectedTag, currentPage],
+        queryKey: ['documents', debouncedQuery, filters, currentPage],
         queryFn: async () => {
             const params = new URLSearchParams({
                 limit: String(ITEMS_PER_PAGE),
                 offset: String(offset),
             });
             if (debouncedQuery) params.set('query', debouncedQuery);
-            if (selectedTag) params.append('tag', selectedTag);
+            if (filters.tag) params.append('tag', filters.tag);
+            if (filters.file_type) params.append('file_type', filters.file_type);
+            if (filters.date_from) params.append('date_from', filters.date_from);
+            if (filters.date_to) params.append('date_to', filters.date_to);
+            if (filters.author) params.append('author', filters.author);
+            if (filters.department) params.append('department', filters.department);
+
             const response = await api.get(`/documents/search?${params}`);
             return response.data;
         },
@@ -73,16 +87,30 @@ const DashboardPage: React.FC = () => {
     const total = data?.total ?? 0;
     const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
 
-    // Estrai i tag univoci dai documenti correnti
-    const availableTags = React.useMemo(() => {
+    // Estrai tag, autori e dipartimenti univoci dai documenti
+    const { availableTags, availableAuthors, availableDepartments } = React.useMemo(() => {
         const tags = new Set<string>();
+        const authors = new Set<string>();
+        const depts = new Set<string>();
+
         documents.forEach((doc: any) => {
             const docTags = doc.doc_metadata?.tags || [];
             docTags.forEach((t: string) => tags.add(t));
+
+            if (doc.doc_metadata?.author) authors.add(doc.doc_metadata.author);
+            if (doc.doc_metadata?.dept) depts.add(doc.doc_metadata.dept);
         });
-        if (selectedTag) tags.add(selectedTag);
-        return Array.from(tags).sort();
-    }, [documents, selectedTag]);
+
+        if (filters.tag) tags.add(filters.tag);
+        if (filters.author) authors.add(filters.author);
+        if (filters.department) depts.add(filters.department);
+
+        return {
+            availableTags: Array.from(tags).sort(),
+            availableAuthors: Array.from(authors).sort(),
+            availableDepartments: Array.from(depts).sort()
+        };
+    }, [documents, filters]);
 
     const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         setInputValue(e.target.value);
@@ -158,6 +186,17 @@ const DashboardPage: React.FC = () => {
                     >
                         <LogOut size={16} />
                     </button>
+                    {/* @ts-ignore - Ignore type error if typing is strict on UserRole */}
+                    {currentUser?.role === 'ADMIN' && (
+                        <button
+                            className="btn"
+                            style={{ width: 'auto', background: 'var(--accent)', color: 'var(--bg-dark)', border: 'none', marginLeft: '0.5rem' }}
+                            onClick={() => window.location.href = '/admin'}
+                            title="Pannello Amministratore"
+                        >
+                            <Shield size={16} />
+                        </button>
+                    )}
                 </div>
             </nav>
 
@@ -166,8 +205,10 @@ const DashboardPage: React.FC = () => {
                     {/* Sidebar Filtri */}
                     <SidebarFilters
                         availableTags={availableTags}
-                        selectedTag={selectedTag}
-                        onSelectTag={setSelectedTag}
+                        availableAuthors={availableAuthors}
+                        availableDepartments={availableDepartments}
+                        filters={filters}
+                        onChange={setFilters}
                     />
 
                     {/* Contenuto Principale */}

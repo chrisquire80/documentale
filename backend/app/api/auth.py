@@ -7,11 +7,11 @@ from jose import jwt, JWTError
 
 from ..db import get_db
 from ..models.user import User
-from ..core.security import verify_password, create_access_token
+from ..core.security import verify_password, create_access_token, create_refresh_token
 from ..core.config import settings
 from ..core.cache import get_redis
 from ..core.rate_limit import limiter
-from ..schemas.doc_schemas import Token, UserLogin, UserResponse
+from ..schemas.doc_schemas import Token, TokenRefreshRequest, UserLogin, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -74,7 +74,34 @@ async def login(request: Request, login_data: UserLogin, db: AsyncSession = Depe
         )
 
     access_token = create_access_token(subject=user.email)
-    return {"access_token": access_token, "token_type": "bearer"}
+    refresh_token = create_refresh_token(subject=user.email)
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+
+@router.post("/refresh", response_model=Token)
+@limiter.limit("5/minute")
+async def refresh(request: Request, refresh_data: TokenRefreshRequest, db: AsyncSession = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Token di refresh non valido o scaduto",
+    )
+    try:
+        payload = jwt.decode(refresh_data.refresh_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        email: str = payload.get("sub")
+        token_type: str = payload.get("type")
+        if email is None or token_type != "refresh":
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+        
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise credentials_exception
+
+    new_access_token = create_access_token(subject=user.email)
+    new_refresh_token = create_refresh_token(subject=user.email)
+    
+    return {"access_token": new_access_token, "refresh_token": new_refresh_token, "token_type": "bearer"}
 
 
 @router.post("/logout")

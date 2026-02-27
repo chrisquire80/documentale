@@ -20,7 +20,7 @@ async def extract_metadata_from_text(text: str) -> Dict[str, Any]:
     """
     if not model or not text.strip():
         logger.warning("Gemini API not configured or text is empty, skipping auto-tagging.")
-        return {"tags": [], "department": "Generale"}
+        return {"tags": [], "department": "Generale", "summary": ""}
 
     # Limit text to roughly 15000 characters to save tokens and inference time
     truncate_text = text[:15000]
@@ -30,12 +30,14 @@ async def extract_metadata_from_text(text: str) -> Dict[str, Any]:
     Analizza il seguente testo estratto da un documento e restituisci ESATTAMENTE e SOLO un JSON valido con questa struttura (nessun preambolo, nessun blocco markdown come ```json):
     {{
         "tags": ["keyword1", "keyword2", "keyword3"],
-        "department": "NomeDipartimento"
+        "department": "NomeDipartimento",
+        "summary": "Breve riassunto del documento"
     }}
 
     Regole:
     - Estrai al massimo 5 tags (max 15 caratteri l'uno, pertinenti).
     - Suggerisci un dipartimento tra questi: "IT", "Risorse Umane", "Amministrazione", "Marketing", "Vendite", "Legale", "Direzione", "Generale". Se non sei sicuro, rispondi "Generale".
+    - Scrivi un "summary" conciso del testo, lungo al massimo 3 frasi in italiano, che spieghi di cosa tratta il documento.
 
     Testo da analizzare:
     {truncate_text}
@@ -48,8 +50,9 @@ async def extract_metadata_from_text(text: str) -> Dict[str, Any]:
         
         return {
             "tags": data.get("tags", []),
-            "department": data.get("department", "Generale")
+            "department": data.get("department", "Generale"),
+            "summary": data.get("summary", "")
         }
     except Exception as e:
         logger.error(f"Errore durante l'estrazione metadata con Gemini: {e}")
-        return {"tags": [], "department": "Generale"}
+        return {"tags": [], "department": "Generale", "summary": ""}

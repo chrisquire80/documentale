@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { X } from 'lucide-react';
 import api from '../services/api';
 
-const UploadModal: React.FC<{ onClose: () => void, onSuccess: () => void }> = ({ onClose, onSuccess }) => {
+const UploadModal: React.FC<{ onClose: () => void, onSuccess: () => void, targetDocId?: string }> = ({ onClose, onSuccess, targetDocId }) => {
     const [file, setFile] = useState<File | null>(null);
     const [title, setTitle] = useState('');
     const [isRestricted, setIsRestricted] = useState(false);
@@ -17,14 +17,22 @@ const UploadModal: React.FC<{ onClose: () => void, onSuccess: () => void }> = ({
         setError(null);
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('title', title || file.name);
-        formData.append('is_restricted', isRestricted.toString());
-        formData.append('metadata_json', JSON.stringify({ tags: ['auto-upload'] }));
+        if (!targetDocId) {
+            formData.append('title', title || file.name);
+            formData.append('is_restricted', isRestricted.toString());
+            formData.append('metadata_json', JSON.stringify({ tags: ['auto-upload'] }));
+        }
 
         try {
-            await api.post('/documents/upload', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            });
+            if (targetDocId) {
+                await api.post(`/documents/${targetDocId}/versions`, formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' }
+                });
+            } else {
+                await api.post('/documents/upload', formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' }
+                });
+            }
             onSuccess();
         } catch (err: any) {
             console.error('Upload failed', err);
@@ -40,12 +48,14 @@ const UploadModal: React.FC<{ onClose: () => void, onSuccess: () => void }> = ({
                 <button onClick={onClose} style={{ position: 'absolute', right: '1rem', top: '1rem', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
                     <X />
                 </button>
-                <h2 style={{ marginBottom: '1.5rem' }}>Carica Documento</h2>
+                <h2 style={{ marginBottom: '1.5rem' }}>{targetDocId ? 'Carica Nuova Versione' : 'Carica Documento'}</h2>
                 <form onSubmit={handleSubmit}>
-                    <div style={{ marginBottom: '1rem' }}>
-                        <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem' }}>Titolo (Opzionale)</label>
-                        <input className="input" placeholder="Titolo" value={title} onChange={e => setTitle(e.target.value)} />
-                    </div>
+                    {!targetDocId && (
+                        <div style={{ marginBottom: '1rem' }}>
+                            <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem' }}>Titolo (Opzionale)</label>
+                            <input className="input" placeholder="Titolo" value={title} onChange={e => setTitle(e.target.value)} />
+                        </div>
+                    )}
 
                     <div style={{ marginBottom: '1rem' }}>
                         <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem' }}>File (PDF, Doc, Txt, Immagini)</label>
@@ -62,10 +72,12 @@ const UploadModal: React.FC<{ onClose: () => void, onSuccess: () => void }> = ({
                         />
                     </div>
 
-                    <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <input type="checkbox" checked={isRestricted} onChange={e => setIsRestricted(e.target.checked)} id="restricted" />
-                        <label htmlFor="restricted" style={{ fontSize: '0.875rem' }}>Documento Riservato</label>
-                    </div>
+                    {!targetDocId && (
+                        <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <input type="checkbox" checked={isRestricted} onChange={e => setIsRestricted(e.target.checked)} id="restricted" />
+                            <label htmlFor="restricted" style={{ fontSize: '0.875rem' }}>Documento Riservato</label>
+                        </div>
+                    )}
 
                     {error && (
                         <div style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: '0.375rem', fontSize: '0.875rem' }}>

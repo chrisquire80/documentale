@@ -1,5 +1,5 @@
 import React from 'react';
-import { X } from 'lucide-react';
+import { X, Sparkles } from 'lucide-react';
 
 interface DocumentPreviewModalProps {
     isOpen: boolean;
@@ -18,8 +18,9 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ isOpen, onC
     // Attempt to guess extension from title if no explicit extension
     const filename = doc.title.toLowerCase();
 
-    // Find metadata tags if any to help identify
+    // Find metadata tags and summary if any
     const tags = doc.doc_metadata?.tags || [];
+    const aiSummary = doc.doc_metadata?.summary;
 
     let isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(filename);
 
@@ -54,6 +55,28 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({ isOpen, onC
                         <X size={24} />
                     </button>
                 </div>
+
+                {/* AI Summary Section */}
+                {aiSummary && (
+                    <div style={{
+                        backgroundColor: 'rgba(139, 92, 246, 0.05)',
+                        borderLeft: '4px solid var(--accent)',
+                        padding: '1rem',
+                        marginBottom: '1rem',
+                        borderRadius: '4px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.5rem'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent)', fontWeight: 600, fontSize: '0.9rem' }}>
+                            <Sparkles size={16} />
+                            <span>Sommario Autogenerato</span>
+                        </div>
+                        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.95rem', lineHeight: '1.5' }}>
+                            {aiSummary}
+                        </p>
+                    </div>
+                )}
 
                 <div style={{
                     flex: 1,

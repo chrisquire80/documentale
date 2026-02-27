@@ -6,7 +6,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     SECRET_KEY: str
     DEBUG: bool = False
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 240  # 4 hours
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 30  # 30 days
     ALGORITHM: str = "HS256"
 
     GEMINI_API_KEY: Optional[str] = None

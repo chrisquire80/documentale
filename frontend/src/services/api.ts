@@ -16,11 +16,38 @@ api.interceptors.request.use((config) => {
 // Response interceptor for 401s
 api.interceptors.response.use(
     (response) => response,
-    (error) => {
-        if (error.response?.status === 401) {
-            localStorage.removeItem('token');
-            window.location.href = '/login';
+    async (error) => {
+        const originalRequest = error.config;
+
+        if (error.response?.status === 401 && !originalRequest._retry) {
+            originalRequest._retry = true;
+            const refreshToken = localStorage.getItem('refreshToken');
+
+            if (refreshToken) {
+                try {
+                    const response = await axios.post(`${api.defaults.baseURL}/auth/refresh`, {
+                        refresh_token: refreshToken
+                    });
+
+                    const { access_token, refresh_token: new_refresh_token } = response.data;
+
+                    localStorage.setItem('token', access_token);
+                    localStorage.setItem('refreshToken', new_refresh_token);
+
+                    originalRequest.headers.Authorization = `Bearer ${access_token}`;
+                    return api(originalRequest);
+                } catch (refreshError) {
+                    // Se il refresh fallisce (es. scaduto) forziamo il logout
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('refreshToken');
+                    window.location.href = '/login';
+                }
+            } else {
+                localStorage.removeItem('token');
+                window.location.href = '/login';
+            }
         }
+
         return Promise.reject(error);
     }
 );
