@@ -8,10 +8,17 @@ Richiede GEMINI_API_KEY configurato in .env / env del container.
 Se la chiave non è configurata o la chiamata fallisce, restituisce [] in
 modo silenzioso, garantendo graceful degradation.
 """
+import json
 import logging
 from typing import List
 
 logger = logging.getLogger(__name__)
+
+_MODEL = "gemini-1.5-flash-8b"
+_SYSTEM = (
+    "Sei un assistente di classificazione documentale italiano. "
+    "Rispondi sempre e solo con JSON valido, nessun testo aggiuntivo."
+)
 
 
 async def suggest_tags(text: str, title: str = "") -> List[str]:
@@ -32,34 +39,31 @@ async def suggest_tags(text: str, title: str = "") -> List[str]:
     if not api_key:
         return []
 
-    # Tronca il testo al massimo a 4000 caratteri per contenere i costi
     excerpt = (text or "")[:4000].strip()
     if not excerpt and not title:
         return []
 
     prompt = (
-        "Sei un assistente di classificazione documentale. "
-        "Analizza il seguente testo e restituisci una lista di tag in italiano "
-        "(massimo 8 tag, separati da virgola) che descrivono l'argomento "
-        "principale del documento. Rispondi SOLO con i tag, nessun testo aggiuntivo.\n\n"
+        "Analizza il seguente documento e restituisci una lista di tag in italiano "
+        "(massimo 8, stringhe lowercase) che descrivono l'argomento principale.\n"
+        'Formato risposta: {"tags": ["tag1", "tag2", ...]}\n\n'
         f"Titolo: {title}\n\nTesto:\n{excerpt}"
     )
 
     try:
-        import asyncio
         import google.generativeai as genai
 
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-
-        # Gemini SDK è sincrono; eseguiamo in thread-pool
-        def _call() -> str:
-            response = model.generate_content(prompt)
-            return response.text or ""
-
-        raw = await asyncio.get_event_loop().run_in_executor(None, _call)
-
-        tags = [t.strip().lower() for t in raw.split(",") if t.strip()]
+        model = genai.GenerativeModel(
+            _MODEL,
+            system_instruction=_SYSTEM,
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+            ),
+        )
+        response = await model.generate_content_async(prompt)
+        data = json.loads(response.text)
+        tags = [t.strip().lower() for t in data.get("tags", []) if t.strip()]
         return tags[:8]
 
     except Exception as exc:

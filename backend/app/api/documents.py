@@ -150,12 +150,14 @@ async def _run_ocr_background(
                 logger.info("PageIndex: albero gerarchico costruito per documento %s.", doc_id)
 
         # Deep analysis (uses entity hints from LangExtract)
+        # Pass pdf_path so Gemini can read the PDF natively via File API
         if gemini_ok:
             analysis_result = await analyze_document(
                 text=merged,
                 title=initial_corpus.split()[0] if initial_corpus else str(doc_id),
                 api_key=settings.GEMINI_API_KEY,
                 entities=entities,
+                pdf_path=abs_path if content_type == "application/pdf" else None,
             )
             if analysis_result:
                 logger.info(
