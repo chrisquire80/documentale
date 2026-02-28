@@ -7,10 +7,12 @@ Built with the huggingface-gradio skill (https://github.com/huggingface/skills).
 
 Tabs
 ----
-1. Ricerca AI        — RAG chat over all documents
+1. Ricerca AI           — RAG chat over all documents
 2. Entità (LangExtract) — on-demand structured entity extraction
-3. Indice Gerarchico (PageIndex) — hierarchical TOC tree for a PDF
-4. Ricerca Testuale  — full-text keyword search
+3. Indice Gerarchico    — hierarchical TOC tree for a PDF (PageIndex)
+4. Analisi Approfondita — deep classification, risk, timeline, relationships
+5. Documenti Simili     — pgvector cosine similarity search
+6. Ricerca Testuale     — full-text keyword search
 
 Usage
 -----
@@ -196,7 +198,120 @@ def run_pageindex(doc_id: str, email: str, password: str) -> str:
         return f"❌ Errore: {exc}"
 
 
-# ── Tab 4: Full-text search ───────────────────────────────────────────────────
+# ── Tab 4: Deep analysis ─────────────────────────────────────────────────────
+
+_SEVERITY_EMOJI = {"critica": "🔴", "alta": "🟠", "media": "🟡", "bassa": "🟢"}
+_SIGNIFICANCE_EMOJI = {"alta": "⭐⭐⭐", "media": "⭐⭐", "bassa": "⭐"}
+
+
+def run_analysis(doc_id: str, email: str, password: str, rerun: bool) -> str:
+    """Call POST or GET /ai/analyze/{doc_id} and render results."""
+    doc_id = doc_id.strip()
+    if not doc_id:
+        return "Inserisci un Document ID."
+    try:
+        token = _login(email, password)
+        method = requests.post if rerun else requests.get
+        resp = method(
+            f"{BASE_URL}/ai/analyze/{doc_id}",
+            headers=_headers(token),
+            timeout=180,
+        )
+        if resp.status_code == 404 and not rerun:
+            return "Nessuna analisi disponibile. Attiva **Riesegui analisi** e riprova."
+        resp.raise_for_status()
+        d = resp.json()
+        cls = d["classification"]
+        risk = d.get("risk_summary", {})
+
+        lines = [
+            f"## 🗂 Classificazione",
+            f"| Campo | Valore |",
+            f"|---|---|",
+            f"| Categoria | **{cls['primary_category']}** |",
+            f"| Sottocategoria | {cls['subcategory']} |",
+            f"| Tipo documento | {cls['doc_type']} |",
+            f"| Intento | {cls['intent']} |",
+            f"| Lingua | {cls['language']} |",
+            f"| Confidenza | {cls['confidence']:.0%} |",
+        ]
+        if cls.get("keywords"):
+            lines.append(f"| Parole chiave | {', '.join(cls['keywords'])} |")
+
+        lines += ["", "## 📋 Sommario"]
+        lines.append(f"> {d['executive_summary']}")
+        lines += ["", "**Punti chiave:**"]
+        for pt in d.get("key_points", []):
+            lines.append(f"- {pt}")
+        lines += ["", d.get("detailed_summary", "")]
+
+        if d.get("risk_indicators"):
+            lines += ["", "## ⚠️ Indicatori di Rischio"]
+            if risk.get("has_risks"):
+                max_sev = risk.get("max_severity", "")
+                lines.append(
+                    f"**Rischio massimo:** {_SEVERITY_EMOJI.get(max_sev, '')} {max_sev.upper()}  "
+                    f"({risk.get('count', 0)} indicatori, {risk.get('critical_count', 0)} critici)"
+                )
+                lines.append("")
+            for ri in d["risk_indicators"]:
+                sev = ri["severity"]
+                lines.append(
+                    f"- {_SEVERITY_EMOJI.get(sev, '')} **{ri['risk_type']}** [{sev}]  \n"
+                    f"  {ri['description']}"
+                    + (f"  \n  *Valore:* `{ri['value']}`" if ri.get("value") else "")
+                )
+
+        if d.get("timeline"):
+            lines += ["", "## 📅 Cronologia"]
+            for ev in d["timeline"]:
+                sig = _SIGNIFICANCE_EMOJI.get(ev["significance"], "⭐")
+                nd = f" → `{ev['normalized_date']}`" if ev.get("normalized_date") else ""
+                lines.append(f"- {sig} **{ev['date']}**{nd}: {ev['event']}")
+
+        if d.get("relationships"):
+            lines += ["", "## 🔗 Relazioni tra entità"]
+            for r in d["relationships"][:10]:
+                conf = f"{r['confidence']:.0%}"
+                lines.append(f"- **{r['subject']}** → *{r['predicate']}* → **{r['object']}** ({conf})")
+
+        lines += ["", f"---", f"*Analisi v{d['analysis_version']} · {d['analyzed_at'][:19]}*"]
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"❌ Errore: {exc}"
+
+
+def run_similar(doc_id: str, limit: int, email: str, password: str) -> str:
+    """Call GET /ai/similar/{doc_id} and render results."""
+    doc_id = doc_id.strip()
+    if not doc_id:
+        return "Inserisci un Document ID."
+    try:
+        token = _login(email, password)
+        resp = requests.get(
+            f"{BASE_URL}/ai/similar/{doc_id}",
+            params={"limit": int(limit)},
+            headers=_headers(token),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        d = resp.json()
+        if not d["similar"]:
+            return "Nessun documento simile trovato."
+        lines = [f"**Documenti simili a** `{d['document_id']}`\n"]
+        for s in d["similar"]:
+            bar = "█" * int(s["similarity"] * 10) + "░" * (10 - int(s["similarity"] * 10))
+            lines.append(
+                f"- **{s['title']}** `{s['document_id']}`  \n"
+                f"  Similarità: `{bar}` {s['similarity']:.1%}  "
+                + (f"· {s['primary_category']} / {s['doc_type']}" if s.get("primary_category") else "")
+            )
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"❌ Errore: {exc}"
+
+
+# ── Tab 5: Full-text search ───────────────────────────────────────────────────
 
 def fts_search(query: str, email: str, password: str) -> str:
     """Call GET /documents/search and render results."""
@@ -305,6 +420,47 @@ with gr.Blocks(title="Documentale AI Demo", theme=gr.themes.Soft()) as demo:
             outputs=pi_output,
         )
 
+    with gr.Tab("🔬 Analisi Approfondita"):
+        gr.Markdown(
+            "Esegue un'analisi profonda del documento: **classificazione tassonomica**, "
+            "**indicatori di rischio**, **cronologia eventi**, **relazioni tra entità**, "
+            "e **sommario esecutivo** — tutto in una singola chiamata Gemini strutturata.\n\n"
+            "Attiva *Riesegui analisi* per forzare un nuovo run (altrimenti recupera il risultato salvato)."
+        )
+        with gr.Row():
+            an_email, an_pwd = _auth_row()
+        with gr.Row():
+            an_doc_id = gr.Textbox(label="Document ID", placeholder="uuid...", scale=8)
+            an_rerun = gr.Checkbox(label="Riesegui analisi", value=False, scale=1)
+        an_btn = gr.Button("Analizza", variant="primary")
+        an_output = gr.Markdown()
+        an_btn.click(
+            fn=run_analysis,
+            inputs=[an_doc_id, an_email, an_pwd, an_rerun],
+            outputs=an_output,
+        )
+
+    with gr.Tab("🔗 Documenti Simili"):
+        gr.Markdown(
+            "Trova i documenti più simili a quello indicato usando la **ricerca vettoriale pgvector** "
+            "(cosine similarity sugli embedding Gemini a 768 dimensioni)."
+        )
+        with gr.Row():
+            sim_email, sim_pwd = _auth_row()
+        with gr.Row():
+            sim_doc_id = gr.Textbox(label="Document ID", placeholder="uuid...", scale=7)
+            sim_limit = gr.Slider(
+                minimum=1, maximum=20, value=5, step=1,
+                label="Numero risultati", scale=2,
+            )
+        sim_btn = gr.Button("Trova simili", variant="primary")
+        sim_output = gr.Markdown()
+        sim_btn.click(
+            fn=run_similar,
+            inputs=[sim_doc_id, sim_limit, sim_email, sim_pwd],
+            outputs=sim_output,
+        )
+
     with gr.Tab("🔎 Ricerca Testuale (FTS)"):
         gr.Markdown(
             "Ricerca full-text PostgreSQL con dizionario italiano. "
@@ -332,7 +488,8 @@ with gr.Blocks(title="Documentale AI Demo", theme=gr.themes.Soft()) as demo:
 
     gr.Markdown(
         "---\n"
-        "Skill: [huggingface/skills gradio](https://github.com/huggingface/skills) · "
+        "Powered by **LangExtract** · **PageIndex** · **pgvector RAG** · **Gemini 1.5 Flash** · "
+        "[huggingface/skills](https://github.com/huggingface/skills)  \n"
         "Backend: Documentale FastAPI @ `" + BASE_URL + "`"
     )
 

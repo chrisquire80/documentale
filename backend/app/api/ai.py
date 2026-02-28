@@ -12,6 +12,7 @@ from ..api.auth import get_current_user
 from ..schemas.ai_schemas import (
     ChatQueryRequest, ChatResponse, ChatSource,
     ExtractEntitiesResponse, PageIndexResponse,
+    AnalysisResponse, SimilarDocumentsResponse,
 )
 from ..services.embeddings import generate_query_embedding
 from ..core.config import settings
@@ -308,3 +309,216 @@ async def index_document_pages(
         section_count=len(_flatten_tree(page_index.get("children", []))),
         page_index=page_index,
     )
+
+
+# ── Deep document analysis ────────────────────────────────────────────────────
+
+@router.post("/analyze/{doc_id}", response_model=AnalysisResponse)
+async def analyze_document_endpoint(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Run (or re-run) deep analysis on a document:
+    classification · relationships · risk indicators · timeline ·
+    multi-level summary.
+
+    Results are persisted in DocumentMetadata.metadata_json["analysis"]
+    and returned in the response. Owner or ADMIN only.
+    """
+    from ..services.document_analyzer import (
+        analyze_document, analysis_to_dict, get_risk_summary,
+    )
+    from ..models.user import UserRole
+
+    if not settings.GEMINI_ENABLED or not settings.GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="Gemini non configurato.")
+
+    doc_stmt = select(Document).where(Document.id == doc_id, Document.is_deleted == False)
+    doc = (await db.execute(doc_stmt)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento non trovato.")
+    if doc.owner_id != current_user.id and current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Accesso negato.")
+
+    content_stmt = select(DocumentContent).where(DocumentContent.document_id == doc_id)
+    content_row = (await db.execute(content_stmt)).scalar_one_or_none()
+    ocr_text = (content_row.fulltext_content or "") if content_row else ""
+
+    if not ocr_text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Nessun testo disponibile (OCR non ancora completato?).",
+        )
+
+    # Retrieve pre-extracted entities as hint
+    meta_stmt = select(DocumentMetadata).where(DocumentMetadata.document_id == doc_id)
+    meta = (await db.execute(meta_stmt)).scalar_one_or_none()
+    entities = []
+    if meta:
+        entities = (meta.metadata_json or {}).get("extracted_entities", [])
+
+    analysis = await analyze_document(
+        text=ocr_text,
+        title=doc.title,
+        api_key=settings.GEMINI_API_KEY,
+        entities=entities,
+    )
+    if not analysis:
+        raise HTTPException(status_code=500, detail="Analisi fallita.")
+
+    analysis_dict = analysis_to_dict(analysis)
+    risk_summary = get_risk_summary(analysis)
+
+    # Persist
+    if meta:
+        current_json = dict(meta.metadata_json or {})
+        current_json["analysis"] = analysis_dict
+        current_json["risk_summary"] = risk_summary
+        # Promote classification to top-level for easy filtering
+        current_json["primary_category"] = analysis.classification.primary_category
+        current_json["doc_type_analyzed"] = analysis.classification.doc_type
+        meta.metadata_json = current_json
+        await db.commit()
+
+    from ..schemas.ai_schemas import (
+        ClassificationOut, RelationshipOut, RiskIndicatorOut,
+        TimelineEventOut, AnalysisResponse,
+    )
+
+    return AnalysisResponse(
+        document_id=str(doc_id),
+        classification=ClassificationOut(**analysis_to_dict(analysis)["classification"]),
+        relationships=[RelationshipOut(**r) for r in analysis_to_dict(analysis)["relationships"]],
+        risk_indicators=[RiskIndicatorOut(**r) for r in analysis_to_dict(analysis)["risk_indicators"]],
+        timeline=[TimelineEventOut(**e) for e in analysis_to_dict(analysis)["timeline"]],
+        executive_summary=analysis.executive_summary,
+        key_points=analysis.key_points,
+        detailed_summary=analysis.detailed_summary,
+        risk_summary=risk_summary,
+        analysis_version=analysis.analysis_version,
+        analyzed_at=analysis.analyzed_at,
+    )
+
+
+@router.get("/analyze/{doc_id}", response_model=AnalysisResponse)
+async def get_analysis(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the last stored analysis for a document (no re-computation)."""
+    from ..models.user import UserRole
+    from ..schemas.ai_schemas import (
+        ClassificationOut, RelationshipOut, RiskIndicatorOut,
+        TimelineEventOut, AnalysisResponse,
+    )
+
+    doc_stmt = select(Document).where(Document.id == doc_id, Document.is_deleted == False)
+    doc = (await db.execute(doc_stmt)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento non trovato.")
+    if doc.owner_id != current_user.id and current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Accesso negato.")
+
+    meta_stmt = select(DocumentMetadata).where(DocumentMetadata.document_id == doc_id)
+    meta = (await db.execute(meta_stmt)).scalar_one_or_none()
+    analysis_dict = (meta.metadata_json or {}).get("analysis") if meta else None
+
+    if not analysis_dict:
+        raise HTTPException(
+            status_code=404,
+            detail="Nessuna analisi disponibile. Esegui prima POST /ai/analyze/{doc_id}.",
+        )
+
+    risk_summary = (meta.metadata_json or {}).get("risk_summary", {})
+
+    return AnalysisResponse(
+        document_id=str(doc_id),
+        classification=ClassificationOut(**analysis_dict["classification"]),
+        relationships=[RelationshipOut(**r) for r in analysis_dict.get("relationships", [])],
+        risk_indicators=[RiskIndicatorOut(**r) for r in analysis_dict.get("risk_indicators", [])],
+        timeline=[TimelineEventOut(**e) for e in analysis_dict.get("timeline", [])],
+        executive_summary=analysis_dict.get("executive_summary", ""),
+        key_points=analysis_dict.get("key_points", []),
+        detailed_summary=analysis_dict.get("detailed_summary", ""),
+        risk_summary=risk_summary,
+        analysis_version=analysis_dict.get("analysis_version", "1.0"),
+        analyzed_at=analysis_dict.get("analyzed_at", ""),
+    )
+
+
+# ── Similar documents ─────────────────────────────────────────────────────────
+
+@router.get("/similar/{doc_id}", response_model=SimilarDocumentsResponse)
+async def find_similar_documents(
+    doc_id: UUID,
+    limit: int = 5,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Find documents semantically similar to *doc_id* using pgvector
+    cosine distance on the 768-dim Gemini embeddings.
+
+    Returns up to *limit* similar documents (excluding the source doc itself).
+    Restricted documents not shared with the requesting user are excluded.
+    """
+    from ..schemas.ai_schemas import SimilarDocumentOut, SimilarDocumentsResponse
+    from ..models.user import UserRole
+
+    doc_stmt = select(Document).where(Document.id == doc_id, Document.is_deleted == False)
+    doc = (await db.execute(doc_stmt)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento non trovato.")
+
+    # Fetch the embedding of the source document
+    emb_stmt = select(DocumentContent).where(DocumentContent.document_id == doc_id)
+    src_content = (await db.execute(emb_stmt)).scalar_one_or_none()
+    if not src_content or src_content.embedding is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Embedding non disponibile per questo documento.",
+        )
+
+    embedding_str = str(list(src_content.embedding))
+
+    stmt = text("""
+        SELECT d.id, d.title, d.is_restricted,
+               (c.embedding <=> :emb::vector) AS distance,
+               m.metadata_json
+        FROM doc_content c
+        JOIN documents d ON c.document_id = d.id
+        LEFT JOIN doc_metadata m ON m.document_id = d.id
+        WHERE d.is_deleted = false
+          AND d.id != :src_id
+          AND c.embedding IS NOT NULL
+          AND (d.owner_id = :user_id OR d.is_restricted = false
+               OR :is_admin = true)
+        ORDER BY distance ASC
+        LIMIT :lim
+    """)
+
+    rows = (await db.execute(stmt, {
+        "emb": embedding_str,
+        "src_id": str(doc_id),
+        "user_id": str(current_user.id),
+        "is_admin": current_user.role == UserRole.ADMIN,
+        "lim": min(limit, 20),
+    })).fetchall()
+
+    similar = []
+    for row in rows:
+        meta_json = row[4] or {}
+        analysis = meta_json.get("analysis", {})
+        cls = analysis.get("classification", {})
+        similar.append(SimilarDocumentOut(
+            document_id=str(row[0]),
+            title=row[1],
+            similarity=round(1.0 - float(row[3]), 4),
+            primary_category=cls.get("primary_category"),
+            doc_type=cls.get("doc_type"),
+        ))
+
+    return SimilarDocumentsResponse(document_id=str(doc_id), similar=similar)

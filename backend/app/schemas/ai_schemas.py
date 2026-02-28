@@ -43,3 +43,63 @@ class PageIndexResponse(BaseModel):
     total_pages: int
     section_count: int
     page_index: dict
+
+
+# ── Deep Analysis ─────────────────────────────────────────────────────────────
+
+class ClassificationOut(BaseModel):
+    primary_category: str
+    subcategory: str
+    doc_type: str
+    intent: str
+    language: str
+    confidence: float
+    keywords: List[str] = []
+
+
+class RelationshipOut(BaseModel):
+    subject: str
+    predicate: str
+    object: str
+    confidence: float
+
+
+class RiskIndicatorOut(BaseModel):
+    risk_type: str
+    severity: str
+    description: str
+    value: Optional[str] = None
+
+
+class TimelineEventOut(BaseModel):
+    date: str
+    normalized_date: Optional[str] = None
+    event: str
+    significance: str
+
+
+class AnalysisResponse(BaseModel):
+    document_id: str
+    classification: ClassificationOut
+    relationships: List[RelationshipOut] = []
+    risk_indicators: List[RiskIndicatorOut] = []
+    timeline: List[TimelineEventOut] = []
+    executive_summary: str
+    key_points: List[str] = []
+    detailed_summary: str
+    risk_summary: dict = {}
+    analysis_version: str
+    analyzed_at: str
+
+
+class SimilarDocumentOut(BaseModel):
+    document_id: str
+    title: str
+    similarity: float
+    primary_category: Optional[str] = None
+    doc_type: Optional[str] = None
+
+
+class SimilarDocumentsResponse(BaseModel):
+    document_id: str
+    similar: List[SimilarDocumentOut]

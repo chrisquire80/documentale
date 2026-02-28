@@ -98,6 +98,7 @@ async def _run_ocr_background(
     from ..services.embeddings import generate_embedding
     from ..services.langextract_service import extract_entities, entities_to_metadata_patch
     from ..services.pageindex_service import build_page_index
+    from ..services.document_analyzer import analyze_document, analysis_to_dict, get_risk_summary
     from ..core.config import settings
 
     storage = LocalStorage()
@@ -112,10 +113,11 @@ async def _run_ocr_background(
     ai_embedding = None
     entity_patch = {}
     page_index = {}
+    analysis_result = None
     if run_llm:
         gemini_ok = settings.GEMINI_ENABLED and settings.GEMINI_API_KEY
 
-        # Run basic metadata extraction, LangExtract, and embedding concurrently
+        # Run basic metadata extraction and embedding concurrently
         ai_metadata_task = asyncio.create_task(extract_metadata_from_text(merged))
         embedding_task = asyncio.create_task(generate_embedding(merged))
 
@@ -125,7 +127,6 @@ async def _run_ocr_background(
             entities_task = asyncio.create_task(
                 extract_entities(merged, api_key=settings.GEMINI_API_KEY)
             )
-            # PageIndex hierarchical tree — PDF only
             if content_type == "application/pdf":
                 pageindex_task = asyncio.create_task(
                     build_page_index(abs_path, initial_corpus, api_key=settings.GEMINI_API_KEY)
@@ -134,6 +135,7 @@ async def _run_ocr_background(
         ai_metadata = await ai_metadata_task
         ai_embedding = await embedding_task
 
+        entities = []
         if entities_task is not None:
             entities = await entities_task
             if entities:
@@ -146,6 +148,22 @@ async def _run_ocr_background(
             page_index = await pageindex_task
             if page_index:
                 logger.info("PageIndex: albero gerarchico costruito per documento %s.", doc_id)
+
+        # Deep analysis (uses entity hints from LangExtract)
+        if gemini_ok:
+            analysis_result = await analyze_document(
+                text=merged,
+                title=initial_corpus.split()[0] if initial_corpus else str(doc_id),
+                api_key=settings.GEMINI_API_KEY,
+                entities=entities,
+            )
+            if analysis_result:
+                logger.info(
+                    "Analisi approfondita completata per %s: categoria=%s, rischi=%d",
+                    doc_id,
+                    analysis_result.classification.primary_category,
+                    len(analysis_result.risk_indicators),
+                )
 
     async with SessionLocal() as db:
         try:
@@ -186,6 +204,13 @@ async def _run_ocr_background(
                     # Store PageIndex hierarchical tree
                     if page_index:
                         current_json["page_index"] = page_index
+
+                    # Store deep analysis results
+                    if analysis_result:
+                        current_json["analysis"] = analysis_to_dict(analysis_result)
+                        current_json["risk_summary"] = get_risk_summary(analysis_result)
+                        current_json["primary_category"] = analysis_result.classification.primary_category
+                        current_json["doc_type_analyzed"] = analysis_result.classification.doc_type
 
                     meta.metadata_json = dict(current_json)
 
@@ -463,6 +488,8 @@ async def search_documents(
     date_to: Optional[datetime] = None,
     author: Optional[str] = None,
     department: Optional[str] = None,
+    category: Optional[str] = Query(None, description="Categoria AI: legale|finanziario|risorse_umane|tecnico|amministrativo|commerciale|corrispondenza"),
+    risk_severity: Optional[str] = Query(None, description="Filtra per livello rischio: bassa|media|alta|critica"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
@@ -472,7 +499,7 @@ async def search_documents(
     cache_key = (
         f"docs:{current_user.id}:"
         + hashlib.md5(
-            f"{query}:{tag}:{file_type}:{date_from}:{date_to}:{author}:{department}:{limit}:{offset}".encode()
+            f"{query}:{tag}:{file_type}:{date_from}:{date_to}:{author}:{department}:{category}:{risk_severity}:{limit}:{offset}".encode()
         ).hexdigest()
     )
     if redis:
@@ -541,6 +568,19 @@ async def search_documents(
     if department:
         need_meta_join = True
         filters.append(DocumentMetadata.metadata_json["dept"].astext == department)
+
+    if category:
+        need_meta_join = True
+        filters.append(
+            DocumentMetadata.metadata_json["primary_category"].astext == category
+        )
+
+    if risk_severity:
+        need_meta_join = True
+        # risk_summary.max_severity stored by analyzer
+        filters.append(
+            DocumentMetadata.metadata_json["risk_summary"]["max_severity"].astext == risk_severity
+        )
 
     count_stmt = select(func.count(distinct(Document.id))).select_from(Document)
     if need_content_join:
