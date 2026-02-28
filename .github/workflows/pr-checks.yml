@@ -1,0 +1,181 @@
+name: PR Checks & Quality Gates
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # Validate PR Title and Description
+  pr-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR title format
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            refactor
+            perf
+            test
+            docs
+            ci
+            chore
+            style
+          requireScope: true
+          subjectPattern: ^[A-Z].*[^.]$
+          subjectPatternError: |
+            Subject must:
+            - Start with uppercase letter
+            - Not end with period
+            Example: "feat: Add new feature"
+
+  # Block PRs with secrets
+  secrets-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+
+  # Enforce test coverage
+  coverage-threshold:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest-cov
+
+      - name: Run tests with coverage
+        working-directory: backend
+        run: |
+          python -m pytest tests/ --cov=app --cov-report=xml
+
+      - name: Check coverage threshold (minimum 50%)
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: backend/coverage.xml
+          badge: true
+          format: markdown
+          output: both
+          thresholds: 50 50
+
+      - name: Comment PR with coverage
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const coverage = fs.readFileSync('code-coverage-results.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: coverage
+            });
+
+  # Code quality checks
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install linting tools
+        run: |
+          pip install black isort flake8 pylint
+
+      - name: Check formatting with black
+        working-directory: backend
+        run: black --check app/ tests/ || true
+
+      - name: Check import sorting
+        working-directory: backend
+        run: isort --check-only app/ tests/ || true
+
+      - name: Lint with flake8
+        working-directory: backend
+        run: |
+          flake8 app/ tests/ --count --statistics --show-source \
+            --select=E9,F63,F7,F82 || true
+
+      - name: Lint with pylint
+        working-directory: backend
+        run: pylint app/ --fail-under=7.0 || true
+
+  # PR size check
+  size-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Size limit check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            const additions = pr.additions;
+            const deletions = pr.deletions;
+            const totalChanges = additions + deletions;
+
+            let warningMessage = '';
+
+            if (totalChanges > 500) {
+              warningMessage = `⚠️ Large PR detected: ${totalChanges} changes. Consider breaking into smaller PRs.`;
+            }
+
+            if (pr.changed_files > 20) {
+              warningMessage += `\n⚠️ Many files changed: ${pr.changed_files} files. Consider breaking into smaller PRs.`;
+            }
+
+            if (warningMessage) {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: warningMessage
+              });
+            }
+
+  # Require status checks
+  require-checks:
+    runs-on: ubuntu-latest
+    needs: [pr-validation, coverage-threshold, code-quality]
+    if: always()
+    steps:
+      - name: Check job status
+        if: needs.pr-validation.result == 'failure' || needs.coverage-threshold.result == 'failure' || needs.code-quality.result == 'failure'
+        run: exit 1
+      - name: All checks passed
+        run: echo "✅ All PR checks passed!"
