@@ -33,3 +33,6 @@ backend_logs.txt
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude memory system — runtime data lives in ~/.documentale-mem/
+# (nothing to ignore inside the project for the memory system)

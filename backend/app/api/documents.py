@@ -90,11 +90,14 @@ async def _run_ocr_background(
 ) -> None:
     """
     Eseguito dopo la risposta HTTP: estrae il testo dal file via OCR
-    e aggiorna DocumentContent.fulltext_content. Se run_llm è True, analizza con Gemini.
+    e aggiorna DocumentContent.fulltext_content. Se run_llm è True, analizza con Gemini
+    e lancia LangExtract per l'estrazione strutturata di entità.
     """
     from ..services.ocr import extract_text
     from ..services.llm_metadata import extract_metadata_from_text
     from ..services.embeddings import generate_embedding
+    from ..services.langextract_service import extract_entities, entities_to_metadata_patch
+    from ..core.config import settings
 
     storage = LocalStorage()
     abs_path = await storage.get_file_path(file_rel_path)
@@ -106,9 +109,28 @@ async def _run_ocr_background(
 
     ai_metadata = None
     ai_embedding = None
+    entity_patch = {}
     if run_llm:
-        ai_metadata = await extract_metadata_from_text(merged)
-        ai_embedding = await generate_embedding(merged)
+        # Run basic metadata extraction and LangExtract entity extraction concurrently
+        ai_metadata_task = asyncio.create_task(extract_metadata_from_text(merged))
+        embedding_task = asyncio.create_task(generate_embedding(merged))
+
+        # LangExtract structured extraction (requires Gemini API key)
+        entities_task = None
+        if settings.GEMINI_ENABLED and settings.GEMINI_API_KEY:
+            entities_task = asyncio.create_task(
+                extract_entities(merged, api_key=settings.GEMINI_API_KEY)
+            )
+
+        ai_metadata = await ai_metadata_task
+        ai_embedding = await embedding_task
+        if entities_task is not None:
+            entities = await entities_task
+            if entities:
+                entity_patch = entities_to_metadata_patch(entities)
+                logger.info(
+                    "LangExtract: %d entità estratte per documento %s.", len(entities), doc_id
+                )
 
     async with SessionLocal() as db:
         try:
@@ -123,19 +145,28 @@ async def _run_ocr_background(
             )
             await db.execute(stmt)
 
-            if ai_metadata:
+            if ai_metadata or entity_patch:
                 meta_stmt = select(DocumentMetadata).where(DocumentMetadata.document_id == doc_id)
                 meta = (await db.execute(meta_stmt)).scalar_one_or_none()
                 if meta:
                     current_json = meta.metadata_json or {}
 
-                    existing_tags = set(current_json.get("tags", []))
-                    ai_tags = set(ai_metadata.get("tags", []))
-                    current_json["tags"] = list(existing_tags.union(ai_tags))
+                    if ai_metadata:
+                        existing_tags = set(current_json.get("tags", []))
+                        ai_tags = set(ai_metadata.get("tags", []))
+                        current_json["tags"] = list(existing_tags.union(ai_tags))
 
-                    if not current_json.get("dept") and ai_metadata.get("department"):
-                        if ai_metadata["department"] != "Generale":
-                            current_json["dept"] = ai_metadata["department"]
+                        if not current_json.get("dept") and ai_metadata.get("department"):
+                            if ai_metadata["department"] != "Generale":
+                                current_json["dept"] = ai_metadata["department"]
+
+                    # Merge LangExtract structured entities into metadata
+                    if entity_patch:
+                        for key in ("extracted_entities", "doc_type", "parties",
+                                    "dates", "amounts", "references"):
+                            value = entity_patch.get(key)
+                            if value:
+                                current_json[key] = value
 
                     meta.metadata_json = dict(current_json)
 
