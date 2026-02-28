@@ -10,7 +10,8 @@ from ..models.user import User
 from ..models.document import Document, DocumentContent, DocumentMetadata
 from ..api.auth import get_current_user
 from ..schemas.ai_schemas import (
-    ChatQueryRequest, ChatResponse, ChatSource, ExtractEntitiesResponse,
+    ChatQueryRequest, ChatResponse, ChatSource,
+    ExtractEntitiesResponse, PageIndexResponse,
 )
 from ..services.embeddings import generate_query_embedding
 from ..core.config import settings
@@ -75,28 +76,51 @@ async def chat_with_documents(
 
     context_text = ""
     sources = []
-    
+
+    # Collect document IDs to fetch PageIndex trees for targeted queries
+    result_doc_ids = [str(row[1]) for row in rows]
+
     for row in rows:
         # row: id, document_id, fulltext_content, title, is_restricted, distance
         doc_id = str(row[1])
         fulltext = row[2] or ""
         title = row[3]
-        
+
         # Prendi un estratto (primi 500 caratteri)
         snippet = fulltext[:500] + "..." if len(fulltext) > 500 else fulltext
-        
+
         context_text += f"\n--- Documento: {title} (ID: {doc_id}) ---\n{snippet}\n"
-        
+
         sources.append(ChatSource(
             document_id=doc_id,
             title=title,
             snippet=snippet[:150] + "..." # Snippet più corto per la risposta JSON
         ))
 
+    # 3b. If a specific document was targeted, enrich context with its
+    #     PageIndex tree (structured section summaries — PageIndex approach).
+    tree_context = ""
+    if request.document_id:
+        from ..models.document import DocumentMetadata
+        from ..services.pageindex_service import tree_to_rag_context
+
+        meta_stmt = select(DocumentMetadata).where(
+            DocumentMetadata.document_id == request.document_id
+        )
+        meta_row = (await db.execute(meta_stmt)).scalar_one_or_none()
+        if meta_row:
+            page_index = (meta_row.metadata_json or {}).get("page_index", {})
+            tree_context = tree_to_rag_context(page_index)
+
     # 4. prompt Gemini con Retrieval-Augmented Generation
+    structure_block = (
+        f"\nSTRUTTURA DEL DOCUMENTO (indice gerarchico):\n{tree_context}\n"
+        if tree_context
+        else ""
+    )
     prompt = f"""
 Sei un assistente aziendale intelligente e professionale. Rispondi alla domanda dell'utente basandoti ESCLUSIVAMENTE sul seguente contesto estratto dai documenti aziendali.
-
+{structure_block}
 CONTESTO:
 {context_text}
 
@@ -106,6 +130,7 @@ ISTRUZIONI:
 - Rispondi in italiano in modo chiaro, conciso e diretto.
 - Se la risposta non è presente nel contesto, dichiara apertamente che non hai informazioni sufficienti nei documenti forniti, e NON inventare nulla.
 - Cita sempre le fonti (es. "In base al documento X...").
+- Se è disponibile una struttura gerarchica, usala per localizzare con precisione la sezione rilevante.
 """
 
     genai.configure(api_key=settings.GEMINI_API_KEY)
@@ -194,4 +219,92 @@ async def extract_document_entities(
         amounts=patch.get("amounts", []),
         references=patch.get("references", []),
         extracted_entities=entities,
+    )
+
+
+# ── PageIndex: on-demand hierarchical tree indexing ───────────────────────────
+
+@router.post("/pageindex/{doc_id}", response_model=PageIndexResponse)
+async def index_document_pages(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Build (or rebuild) the PageIndex hierarchical tree for a PDF document.
+
+    Inspired by https://github.com/VectifyAI/PageIndex — replaces flat
+    vector chunks with a TOC-driven tree of sections and AI summaries that
+    lets /ai/chat reason about document structure rather than similarity.
+
+    The result is stored in DocumentMetadata.metadata_json["page_index"]
+    and returned in the response.  Only PDF documents are supported.
+    Owner or ADMIN required.
+    """
+    from ..services.pageindex_service import build_page_index, tree_to_rag_context
+    from ..models.user import UserRole
+    from ..core.storage import LocalStorage
+
+    if not settings.GEMINI_ENABLED or not settings.GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Gemini non configurato — necessario per PageIndex.",
+        )
+
+    # Recupera documento e verifica accesso
+    doc_stmt = select(Document).where(Document.id == doc_id, Document.is_deleted == False)
+    doc = (await db.execute(doc_stmt)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento non trovato.")
+    if doc.owner_id != current_user.id and current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Accesso negato.")
+    if doc.file_type != "application/pdf":
+        raise HTTPException(
+            status_code=422,
+            detail="PageIndex è supportato solo per documenti PDF.",
+        )
+
+    # Recupera il percorso fisico del file dall'ultima versione
+    from ..models.document import DocumentVersion
+    ver_stmt = (
+        select(DocumentVersion)
+        .where(DocumentVersion.document_id == doc_id)
+        .order_by(DocumentVersion.version_num.desc())
+    )
+    version = (await db.execute(ver_stmt)).scalars().first()
+    if not version:
+        raise HTTPException(status_code=404, detail="Nessuna versione trovata per il documento.")
+
+    storage = LocalStorage()
+    abs_path = await storage.get_file_path(version.file_path)
+
+    # Esegui PageIndex
+    page_index = await build_page_index(
+        pdf_path=abs_path,
+        doc_title=doc.title,
+        api_key=settings.GEMINI_API_KEY,
+    )
+
+    if not page_index:
+        raise HTTPException(
+            status_code=500,
+            detail="Impossibile costruire l'indice gerarchico per questo documento.",
+        )
+
+    # Persisti in metadata_json
+    meta_stmt = select(DocumentMetadata).where(DocumentMetadata.document_id == doc_id)
+    meta = (await db.execute(meta_stmt)).scalar_one_or_none()
+    if meta:
+        current_json = dict(meta.metadata_json or {})
+        current_json["page_index"] = page_index
+        meta.metadata_json = current_json
+        await db.commit()
+
+    from ..services.pageindex_service import _flatten_tree
+
+    return PageIndexResponse(
+        document_id=str(doc_id),
+        total_pages=page_index.get("total_pages", 0),
+        section_count=len(_flatten_tree(page_index.get("children", []))),
+        page_index=page_index,
     )

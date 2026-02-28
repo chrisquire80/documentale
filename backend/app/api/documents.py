@@ -97,6 +97,7 @@ async def _run_ocr_background(
     from ..services.llm_metadata import extract_metadata_from_text
     from ..services.embeddings import generate_embedding
     from ..services.langextract_service import extract_entities, entities_to_metadata_patch
+    from ..services.pageindex_service import build_page_index
     from ..core.config import settings
 
     storage = LocalStorage()
@@ -110,20 +111,29 @@ async def _run_ocr_background(
     ai_metadata = None
     ai_embedding = None
     entity_patch = {}
+    page_index = {}
     if run_llm:
-        # Run basic metadata extraction and LangExtract entity extraction concurrently
+        gemini_ok = settings.GEMINI_ENABLED and settings.GEMINI_API_KEY
+
+        # Run basic metadata extraction, LangExtract, and embedding concurrently
         ai_metadata_task = asyncio.create_task(extract_metadata_from_text(merged))
         embedding_task = asyncio.create_task(generate_embedding(merged))
 
-        # LangExtract structured extraction (requires Gemini API key)
         entities_task = None
-        if settings.GEMINI_ENABLED and settings.GEMINI_API_KEY:
+        pageindex_task = None
+        if gemini_ok:
             entities_task = asyncio.create_task(
                 extract_entities(merged, api_key=settings.GEMINI_API_KEY)
             )
+            # PageIndex hierarchical tree — PDF only
+            if content_type == "application/pdf":
+                pageindex_task = asyncio.create_task(
+                    build_page_index(abs_path, initial_corpus, api_key=settings.GEMINI_API_KEY)
+                )
 
         ai_metadata = await ai_metadata_task
         ai_embedding = await embedding_task
+
         if entities_task is not None:
             entities = await entities_task
             if entities:
@@ -131,6 +141,11 @@ async def _run_ocr_background(
                 logger.info(
                     "LangExtract: %d entità estratte per documento %s.", len(entities), doc_id
                 )
+
+        if pageindex_task is not None:
+            page_index = await pageindex_task
+            if page_index:
+                logger.info("PageIndex: albero gerarchico costruito per documento %s.", doc_id)
 
     async with SessionLocal() as db:
         try:
@@ -145,7 +160,7 @@ async def _run_ocr_background(
             )
             await db.execute(stmt)
 
-            if ai_metadata or entity_patch:
+            if ai_metadata or entity_patch or page_index:
                 meta_stmt = select(DocumentMetadata).where(DocumentMetadata.document_id == doc_id)
                 meta = (await db.execute(meta_stmt)).scalar_one_or_none()
                 if meta:
@@ -167,6 +182,10 @@ async def _run_ocr_background(
                             value = entity_patch.get(key)
                             if value:
                                 current_json[key] = value
+
+                    # Store PageIndex hierarchical tree
+                    if page_index:
+                        current_json["page_index"] = page_index
 
                     meta.metadata_json = dict(current_json)
 

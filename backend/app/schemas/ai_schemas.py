@@ -36,3 +36,10 @@ class ExtractEntitiesResponse(BaseModel):
     amounts: List[dict] = []
     references: List[str] = []
     extracted_entities: List[dict] = []
+
+
+class PageIndexResponse(BaseModel):
+    document_id: str
+    total_pages: int
+    section_count: int
+    page_index: dict
