@@ -1,0 +1,89 @@
+codecov:
+  require_ci_to_pass: yes
+  precision: 2
+  max_report_age: 369 days
+
+coverage:
+  precision: 2
+  round: down
+  range: "50...100"
+  status:
+    project:
+      default:
+        target: 60%
+        threshold: 5%
+        base: auto
+        flags:
+          - backend
+          - frontend
+    patch:
+      default:
+        target: 70%
+        threshold: 2%
+    changes:
+      default:
+        target: 80%
+
+flags:
+  backend:
+    paths:
+      - backend/app/
+    carryforward: true
+    statuses:
+      - type: patch
+        target: 70%
+        threshold: 2%
+      - type: project
+        target: 60%
+        threshold: 5%
+
+  frontend:
+    paths:
+      - frontend/src/
+    carryforward: true
+    statuses:
+      - type: patch
+        target: 75%
+        threshold: 3%
+      - type: project
+        target: 65%
+        threshold: 5%
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false
+  require_base: no
+  require_head: yes
+  deletions: false
+
+ignore:
+  - "**/**/tests/**"
+  - "**/**/test/**"
+  - "**/venv/**"
+  - "**/migrations/**"
+  - "setup.py"
+  - "conftest.py"
+  - "frontend/node_modules/**"
+  - "backend/migrations/**"
+
+github:
+  require_ci_to_pass: true
+  statuses:
+    - type: "patch"
+      flags: ["backend", "frontend"]
+      informational: false
+    - type: "project"
+      flags: ["backend", "frontend"]
+      informational: false
+
+# Merge behavior
+merge:
+  method: "merge"
+  behavior: merge
+
+# Report handling
+report:
+  precision: 2
+  round: down
+  sort: coverage

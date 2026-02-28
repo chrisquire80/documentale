@@ -1,0 +1,9 @@
+# Performance Testing Requirements
+
+# Locust - Load testing framework
+locust==2.17.0
+
+# Additional tools
+locust-plugins==4.4.3  # Extended Locust functionality
+psutil==5.9.6  # System monitoring
+requests==2.31.0  # HTTP client
