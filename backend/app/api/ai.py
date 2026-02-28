@@ -1,15 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import text
+from sqlalchemy import text, update as sa_update
 import google.generativeai as genai
 from uuid import UUID
 
 from ..db import get_db
 from ..models.user import User
-from ..models.document import Document, DocumentContent
+from ..models.document import Document, DocumentContent, DocumentMetadata
 from ..api.auth import get_current_user
-from ..schemas.ai_schemas import ChatQueryRequest, ChatResponse, ChatSource
+from ..schemas.ai_schemas import (
+    ChatQueryRequest, ChatResponse, ChatSource, ExtractEntitiesResponse,
+)
 from ..services.embeddings import generate_query_embedding
 from ..core.config import settings
 
@@ -121,4 +123,75 @@ ISTRUZIONI:
     return ChatResponse(
         answer=answer,
         sources=sources
+    )
+
+
+# ── LangExtract: on-demand structured entity extraction ──────────────────────
+
+@router.post("/extract/{doc_id}", response_model=ExtractEntitiesResponse)
+async def extract_document_entities(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Esegue (o ri-esegue) l'estrazione strutturata di entità tramite LangExtract
+    sul testo OCR già memorizzato del documento indicato.
+
+    Le entità vengono salvate in DocumentMetadata.metadata_json e restituite
+    nella risposta. L'utente deve essere proprietario o ADMIN.
+    """
+    from ..services.langextract_service import extract_entities, entities_to_metadata_patch
+    from ..models.user import UserRole
+
+    if not settings.GEMINI_ENABLED or not settings.GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Integrazione Gemini/LangExtract non configurata.",
+        )
+
+    # Recupera documento e verifica accesso
+    doc_stmt = select(Document).where(Document.id == doc_id, Document.is_deleted == False)
+    doc = (await db.execute(doc_stmt)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento non trovato.")
+    if doc.owner_id != current_user.id and current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Accesso negato.")
+
+    # Recupera il testo OCR
+    content_stmt = select(DocumentContent).where(DocumentContent.document_id == doc_id)
+    content_row = (await db.execute(content_stmt)).scalar_one_or_none()
+    ocr_text = (content_row.fulltext_content or "") if content_row else ""
+
+    if not ocr_text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Nessun testo disponibile per l'estrazione (OCR non ancora completato?).",
+        )
+
+    # Esegui LangExtract
+    entities = await extract_entities(ocr_text, api_key=settings.GEMINI_API_KEY)
+    patch = entities_to_metadata_patch(entities)
+
+    # Persisti in metadata_json
+    meta_stmt = select(DocumentMetadata).where(DocumentMetadata.document_id == doc_id)
+    meta = (await db.execute(meta_stmt)).scalar_one_or_none()
+    if meta:
+        current_json = dict(meta.metadata_json or {})
+        for key in ("extracted_entities", "doc_type", "parties", "dates", "amounts", "references"):
+            value = patch.get(key)
+            if value:
+                current_json[key] = value
+        meta.metadata_json = current_json
+        await db.commit()
+
+    return ExtractEntitiesResponse(
+        document_id=str(doc_id),
+        entity_count=len(entities),
+        doc_type=patch.get("doc_type"),
+        parties=patch.get("parties", []),
+        dates=patch.get("dates", []),
+        amounts=patch.get("amounts", []),
+        references=patch.get("references", []),
+        extracted_entities=entities,
     )

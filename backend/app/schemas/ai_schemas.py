@@ -14,3 +14,25 @@ class ChatSource(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     sources: List[ChatSource] = []
+
+
+class ExtractedEntity(BaseModel):
+    cls: str = Field(..., alias="class", description="Classe entità (party, date, amount, …)")
+    text: str
+    attributes: dict = {}
+    char_start: Optional[int] = None
+    char_end: Optional[int] = None
+
+    class Config:
+        populate_by_name = True
+
+
+class ExtractEntitiesResponse(BaseModel):
+    document_id: str
+    entity_count: int
+    doc_type: Optional[str] = None
+    parties: List[dict] = []
+    dates: List[dict] = []
+    amounts: List[dict] = []
+    references: List[str] = []
+    extracted_entities: List[dict] = []
