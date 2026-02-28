@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "qmd": {
+      "command": "qmd",
+      "args": ["mcp"],
+      "description": "QMD hybrid search (BM25 + vector + LLM reranking) over documentale project docs. Run scripts/setup-qmd.sh first to create collections and generate embeddings."
+    }
+  }
+}
