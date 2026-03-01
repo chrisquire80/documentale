@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2 } from 'lucide-react';
+import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2, Bot, CheckCircle, XCircle, Send } from 'lucide-react';
 import DocumentPreviewModal from './DocumentPreviewModal';
 import EditMetadataModal from './EditMetadataModal';
 import DocumentVersionModal from './DocumentVersionModal';
@@ -9,7 +9,15 @@ import ShareModal from './ShareModal';
 import CommentsPanel from './CommentsPanel';
 import UploadModal from './UploadModal';
 import RelatedDocumentsModal from './RelatedDocumentsModal';
+import AIChatModal from './AIChatModal';
 import { useAuth } from '../store/AuthContext';
+
+const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }> = {
+    draft:     { label: 'Bozza',      color: '#94a3b8', bg: 'rgba(148,163,184,0.15)' },
+    in_review: { label: 'In revisione', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
+    approved:  { label: 'Approvato',  color: '#22c55e', bg: 'rgba(34,197,94,0.15)' },
+    rejected:  { label: 'Rifiutato',  color: '#ef4444', bg: 'rgba(239,68,68,0.15)' },
+};
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:8000';
 
@@ -31,13 +39,29 @@ const DocumentCard: React.FC<{
     const [versionOpen, setVersionOpen] = useState(false);
     const [uploadVersionOpen, setUploadVersionOpen] = useState(false);
     const [relatedOpen, setRelatedOpen] = useState(false);
+    const [chatOpen, setChatOpen] = useState(false);
 
     const canEdit = (currentUser?.role as string) === 'ADMIN' || currentUser?.id === doc.owner_id;
+    const canReview = (currentUser?.role as string) === 'ADMIN' || (currentUser?.role as string) === 'POWER_USER' || (currentUser?.role as string) === 'power_user';
+    const docStatus: string = doc.status ?? 'draft';
 
     const softDeleteMutation = useMutation({
         mutationFn: (docId: string) => {
             const token = localStorage.getItem('token');
             return axios.delete(`${BASE_URL}/api/documents/${docId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['documents'] });
+            if (onUpdate) onUpdate();
+        }
+    });
+
+    const workflowMutation = useMutation({
+        mutationFn: ({ action }: { action: 'submit' | 'approve' | 'reject' }) => {
+            const token = localStorage.getItem('token');
+            return axios.post(`${BASE_URL}/api/documents/${doc.id}/${action}`, {}, {
                 headers: { Authorization: `Bearer ${token}` }
             });
         },
@@ -144,6 +168,22 @@ const DocumentCard: React.FC<{
                 </div>
             </div>
 
+            {/* Status badge */}
+            {(() => {
+                const s = STATUS_LABELS[docStatus] ?? STATUS_LABELS['draft'];
+                return (
+                    <div style={{ marginBottom: '0.6rem' }}>
+                        <span style={{
+                            fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px',
+                            borderRadius: '9999px', color: s.color, background: s.bg,
+                            border: `1px solid ${s.color}33`, letterSpacing: '0.03em',
+                        }}>
+                            {s.label}
+                        </span>
+                    </div>
+                );
+            })()}
+
             {/* Azioni Secondarie - Row dedicata */}
             <div style={{
                 display: 'flex',
@@ -155,6 +195,9 @@ const DocumentCard: React.FC<{
                 flexWrap: 'wrap',
                 border: '1px solid var(--glass)'
             }}>
+                <button onClick={() => setChatOpen(true)} title="Chat AI" className="icon-btn" style={{ color: 'var(--accent)' }}>
+                    <Bot size={16} />
+                </button>
                 <button onClick={() => setCommentsOpen(true)} title="Commenti" className="icon-btn">
                     <MessageSquare size={16} />
                 </button>
@@ -167,6 +210,46 @@ const DocumentCard: React.FC<{
                 <button onClick={() => setRelatedOpen(true)} title="Correlati" className="icon-btn">
                     <Link2 size={16} />
                 </button>
+
+                {/* Workflow di approvazione */}
+                {canEdit && docStatus === 'draft' && (
+                    <>
+                        <div style={{ width: '1px', height: '16px', background: 'var(--glass)', margin: '0 0.2rem', alignSelf: 'center' }} />
+                        <button
+                            onClick={() => workflowMutation.mutate({ action: 'submit' })}
+                            title="Invia in revisione"
+                            className="icon-btn"
+                            style={{ color: '#f59e0b' }}
+                            disabled={workflowMutation.isPending}
+                        >
+                            <Send size={16} />
+                        </button>
+                    </>
+                )}
+                {canReview && docStatus === 'in_review' && (
+                    <>
+                        <div style={{ width: '1px', height: '16px', background: 'var(--glass)', margin: '0 0.2rem', alignSelf: 'center' }} />
+                        <button
+                            onClick={() => workflowMutation.mutate({ action: 'approve' })}
+                            title="Approva"
+                            className="icon-btn"
+                            style={{ color: '#22c55e' }}
+                            disabled={workflowMutation.isPending}
+                        >
+                            <CheckCircle size={16} />
+                        </button>
+                        <button
+                            onClick={() => workflowMutation.mutate({ action: 'reject' })}
+                            title="Rifiuta"
+                            className="icon-btn"
+                            style={{ color: '#ef4444' }}
+                            disabled={workflowMutation.isPending}
+                        >
+                            <XCircle size={16} />
+                        </button>
+                    </>
+                )}
+
                 {canEdit && (
                     <>
                         <div style={{ width: '1px', height: '16px', background: 'var(--glass)', margin: '0 0.2rem', alignSelf: 'center' }} />
@@ -296,6 +379,14 @@ const DocumentCard: React.FC<{
                         if (onUpdate) onUpdate();
                     }}
                     targetDocId={doc.id}
+                />
+            )}
+
+            {chatOpen && (
+                <AIChatModal
+                    docId={doc.id}
+                    docTitle={doc.title}
+                    onClose={() => setChatOpen(false)}
                 />
             )}
         </div>

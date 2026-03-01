@@ -3,6 +3,7 @@ from uuid import UUID
 from datetime import datetime
 from typing import List, Optional, Any, Dict
 from ..models.user import UserRole
+from ..models.document import DocumentStatus
 
 # Auth
 class Token(BaseModel):
@@ -63,6 +64,7 @@ class DocumentResponse(DocumentBase):
     current_version: int
     owner_id: UUID
     is_deleted: bool = False
+    status: DocumentStatus = DocumentStatus.draft
     created_at: datetime
     deleted_at: Optional[datetime] = None
 

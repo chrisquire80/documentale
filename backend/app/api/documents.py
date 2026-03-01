@@ -1091,6 +1091,104 @@ async def restore_document(
             
     return doc
 
+# ── Workflow di Approvazione ──────────────────────────────────────────────────
+
+@router.post("/{doc_id}/submit", response_model=DocumentResponse)
+async def submit_for_review(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Invia un documento in revisione (draft → in_review). Solo il proprietario."""
+    from ..models.document import DocumentStatus
+    stmt = select(Document).options(selectinload(Document.metadata_entries), selectinload(Document.owner)).where(
+        Document.id == doc_id, Document.is_deleted == False
+    )
+    doc = (await db.execute(stmt)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento non trovato.")
+    if doc.owner_id != current_user.id and current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Solo il proprietario può inviare in revisione.")
+    if doc.status != DocumentStatus.draft:
+        raise HTTPException(status_code=409, detail=f"Transizione non valida: il documento è '{doc.status.value}'.")
+
+    doc.status = DocumentStatus.in_review
+    db.add(AuditLog(user_id=current_user.id, action="SUBMIT_FOR_REVIEW", target_id=doc.id))
+    await db.commit()
+    await db.refresh(doc)
+
+    await manager.broadcast({
+        "type": "DOC_MODIFIED",
+        "message": f"Il documento '{doc.title}' è in attesa di revisione.",
+        "doc_id": str(doc.id),
+    })
+    return doc
+
+
+@router.post("/{doc_id}/approve", response_model=DocumentResponse)
+async def approve_document(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approva un documento (in_review → approved). Solo ADMIN o POWER_USER."""
+    from ..models.document import DocumentStatus
+    if current_user.role not in (UserRole.ADMIN, UserRole.POWER_USER):
+        raise HTTPException(status_code=403, detail="Solo ADMIN o POWER_USER possono approvare documenti.")
+
+    stmt = select(Document).options(selectinload(Document.metadata_entries), selectinload(Document.owner)).where(
+        Document.id == doc_id, Document.is_deleted == False
+    )
+    doc = (await db.execute(stmt)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento non trovato.")
+    if doc.status != DocumentStatus.in_review:
+        raise HTTPException(status_code=409, detail=f"Transizione non valida: il documento è '{doc.status.value}'.")
+
+    doc.status = DocumentStatus.approved
+    db.add(AuditLog(user_id=current_user.id, action="APPROVE", target_id=doc.id))
+    await db.commit()
+    await db.refresh(doc)
+
+    await manager.send_personal_message(
+        {"type": "DOC_MODIFIED", "message": f"Il tuo documento '{doc.title}' è stato approvato.", "doc_id": str(doc.id)},
+        doc.owner_id,
+    )
+    return doc
+
+
+@router.post("/{doc_id}/reject", response_model=DocumentResponse)
+async def reject_document(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rifiuta un documento (in_review → rejected). Solo ADMIN o POWER_USER."""
+    from ..models.document import DocumentStatus
+    if current_user.role not in (UserRole.ADMIN, UserRole.POWER_USER):
+        raise HTTPException(status_code=403, detail="Solo ADMIN o POWER_USER possono rifiutare documenti.")
+
+    stmt = select(Document).options(selectinload(Document.metadata_entries), selectinload(Document.owner)).where(
+        Document.id == doc_id, Document.is_deleted == False
+    )
+    doc = (await db.execute(stmt)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento non trovato.")
+    if doc.status != DocumentStatus.in_review:
+        raise HTTPException(status_code=409, detail=f"Transizione non valida: il documento è '{doc.status.value}'.")
+
+    doc.status = DocumentStatus.rejected
+    db.add(AuditLog(user_id=current_user.id, action="REJECT", target_id=doc.id))
+    await db.commit()
+    await db.refresh(doc)
+
+    await manager.send_personal_message(
+        {"type": "DOC_MODIFIED", "message": f"Il tuo documento '{doc.title}' è stato rifiutato.", "doc_id": str(doc.id)},
+        doc.owner_id,
+    )
+    return doc
+
+
 @router.delete("/{doc_id}/hard")
 async def hard_delete_document(
     doc_id: UUID,

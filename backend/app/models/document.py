@@ -1,9 +1,17 @@
-from sqlalchemy import Column, String, Integer, UUID, ForeignKey, DateTime, Boolean, JSON, func, Table, Index
+from sqlalchemy import Column, String, Integer, UUID, ForeignKey, DateTime, Boolean, JSON, func, Table, Index, Enum as SAEnum
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from pgvector.sqlalchemy import Vector
+import enum
 import uuid
 from ..db import Base
+
+
+class DocumentStatus(str, enum.Enum):
+    draft = "draft"
+    in_review = "in_review"
+    approved = "approved"
+    rejected = "rejected"
 
 
 class Document(Base):
@@ -16,6 +24,7 @@ class Document(Base):
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     is_restricted = Column(Boolean, default=False, index=True)
     is_deleted = Column(Boolean, default=False, index=True)
+    status = Column(SAEnum(DocumentStatus, name="document_status", create_type=True), nullable=False, default=DocumentStatus.draft, server_default="draft", index=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

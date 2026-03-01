@@ -13,6 +13,9 @@ import DashboardStatsModal from '../components/DashboardStatsModal';
 import SidebarFilters from '../components/SidebarFilters';
 import type { FilterState } from '../components/SidebarFilters';
 import BulkActionBar from '../components/BulkActionBar';
+import NotificationBell from '../components/NotificationBell';
+import AIChatModal from '../components/AIChatModal';
+import { Bot } from 'lucide-react';
 
 const ITEMS_PER_PAGE = 20;
 const SKELETON_COUNT = 6;
@@ -43,7 +46,8 @@ const DashboardPage: React.FC = () => {
     const [isBulkOpen, setIsBulkOpen] = useState(false);
     const [isStatsOpen, setIsStatsOpen] = useState(false);
     const [isDocStatsOpen, setIsDocStatsOpen] = useState(false);
-    const { currentUser, logout } = useAuth();
+    const { currentUser, logout, notifications, markAllRead } = useAuth();
+    const [isChatOpen, setIsChatOpen] = useState(false);
 
     // Debounce
     useEffect(() => {
@@ -180,6 +184,15 @@ const DashboardPage: React.FC = () => {
                     </button>
                     <button
                         className="btn"
+                        style={{ width: 'auto', background: 'transparent', border: '1px solid var(--glass)', color: 'var(--accent)' }}
+                        onClick={() => setIsChatOpen(true)}
+                        title="AI Chat — chatta con i tuoi documenti"
+                    >
+                        <Bot size={18} />
+                    </button>
+                    <NotificationBell notifications={notifications} onMarkAllRead={markAllRead} />
+                    <button
+                        className="btn"
                         style={{ width: 'auto', background: 'transparent', border: '1px solid var(--glass)' }}
                         onClick={logout}
                         title="Esci"
@@ -279,6 +292,9 @@ const DashboardPage: React.FC = () => {
             )}
             {isDocStatsOpen && (
                 <DashboardStatsModal onClose={() => setIsDocStatsOpen(false)} />
+            )}
+            {isChatOpen && (
+                <AIChatModal onClose={() => setIsChatOpen(false)} />
             )}
         </div>
     );

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { Shield, Users, Activity, UserPlus, Power, CheckCircle, XCircle, Download } from 'lucide-react';
+import { Shield, Users, Activity, UserPlus, Power, CheckCircle, XCircle, Download, Puzzle, ToggleLeft, ToggleRight } from 'lucide-react';
 import { useAuth } from '../store/AuthContext';
 import Pagination from '../components/Pagination';
 
@@ -10,7 +10,7 @@ const BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:8
 const AdminPage: React.FC = () => {
     const { currentUser } = useAuth();
     const queryClient = useQueryClient();
-    const [activeTab, setActiveTab] = useState<'users' | 'audit' | 'stats'>('users');
+    const [activeTab, setActiveTab] = useState<'users' | 'audit' | 'stats' | 'plugins'>('users');
 
     // Paginazione Users
     const [userPage, setUserPage] = useState(1);
@@ -60,6 +60,30 @@ const AdminPage: React.FC = () => {
             });
         },
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+    });
+
+    // Fetch Plugin List
+    const { data: pluginsData, isLoading: isLoadingPlugins, refetch: refetchPlugins } = useQuery({
+        queryKey: ['admin-plugins'],
+        queryFn: async () => {
+            const token = localStorage.getItem('token');
+            const res = await axios.get(`${BASE_URL}/api/plugins/`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            return res.data as { name: string; version: string; description: string; enabled: boolean }[];
+        },
+        enabled: activeTab === 'plugins'
+    });
+
+    // Toggle plugin enabled/disabled
+    const togglePluginMutation = useMutation({
+        mutationFn: async ({ name, enabled }: { name: string; enabled: boolean }) => {
+            const token = localStorage.getItem('token');
+            return axios.patch(`${BASE_URL}/api/plugins/${name}`, { enabled }, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+        },
+        onSuccess: () => refetchPlugins()
     });
 
     const handleExportAuditCSV = async () => {
@@ -138,6 +162,17 @@ const AdminPage: React.FC = () => {
                         }}
                     >
                         <Activity size={18} /> Audit Log
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('plugins')}
+                        style={{
+                            background: 'none', border: 'none', padding: '1rem', cursor: 'pointer',
+                            color: activeTab === 'plugins' ? 'var(--accent)' : 'var(--text-muted)',
+                            borderBottom: activeTab === 'plugins' ? '2px solid var(--accent)' : '2px solid transparent',
+                            display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1rem'
+                        }}
+                    >
+                        <Puzzle size={18} /> Plugin
                     </button>
                 </div>
 
@@ -282,6 +317,74 @@ const AdminPage: React.FC = () => {
                                     />
                                 )}
                             </>
+                        )}
+                    </div>
+                )}
+                {/* Content: Plugin */}
+                {activeTab === 'plugins' && (
+                    <div className="auth-card" style={{ maxWidth: '100%', margin: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                            <h2 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <Puzzle size={20} /> Plugin Registrati
+                            </h2>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                Le modifiche sono attive immediatamente senza riavvio.
+                            </span>
+                        </div>
+
+                        {isLoadingPlugins ? (
+                            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Caricamento plugin...</div>
+                        ) : !pluginsData?.length ? (
+                            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                                <Puzzle size={36} style={{ margin: '0 auto 0.75rem', opacity: 0.3 }} />
+                                Nessun plugin registrato.
+                            </div>
+                        ) : (
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                                    <thead>
+                                        <tr style={{ borderBottom: '1px solid var(--glass)' }}>
+                                            <th style={{ padding: '0.75rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Nome</th>
+                                            <th style={{ padding: '0.75rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Versione</th>
+                                            <th style={{ padding: '0.75rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Descrizione</th>
+                                            <th style={{ padding: '0.75rem 0', color: 'var(--text-muted)', fontWeight: 500, textAlign: 'center' }}>Stato</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {pluginsData.map(plugin => (
+                                            <tr key={plugin.name} style={{ borderBottom: '1px solid var(--glass)' }}>
+                                                <td style={{ padding: '0.9rem 0', fontWeight: 600, fontFamily: 'monospace', fontSize: '0.9rem' }}>
+                                                    {plugin.name}
+                                                </td>
+                                                <td style={{ padding: '0.9rem 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                                                    v{plugin.version}
+                                                </td>
+                                                <td style={{ padding: '0.9rem 1rem 0.9rem 0', color: 'var(--text-muted)', fontSize: '0.85rem', maxWidth: '400px' }}>
+                                                    {plugin.description}
+                                                </td>
+                                                <td style={{ padding: '0.9rem 0', textAlign: 'center' }}>
+                                                    <button
+                                                        onClick={() => togglePluginMutation.mutate({ name: plugin.name, enabled: !plugin.enabled })}
+                                                        disabled={togglePluginMutation.isPending}
+                                                        title={plugin.enabled ? 'Disabilita plugin' : 'Abilita plugin'}
+                                                        style={{
+                                                            background: 'none', border: 'none', cursor: 'pointer',
+                                                            color: plugin.enabled ? '#22c55e' : 'var(--text-muted)',
+                                                            display: 'flex', alignItems: 'center', gap: '6px',
+                                                            margin: '0 auto', fontSize: '0.8rem', fontWeight: 600,
+                                                        }}
+                                                    >
+                                                        {plugin.enabled
+                                                            ? <><ToggleRight size={22} /> Attivo</>
+                                                            : <><ToggleLeft size={22} /> Disattivo</>
+                                                        }
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
                         )}
                     </div>
                 )}

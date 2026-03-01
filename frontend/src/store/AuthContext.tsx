@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import api from '../services/api';
+import type { AppNotification } from '../components/NotificationBell';
 
 const BASE_WS_URL = (import.meta.env.VITE_API_URL as string)?.replace('http', 'ws') || 'ws://localhost:8000';
 
@@ -19,6 +20,8 @@ interface AuthContextType {
     login: (token: string, refreshToken: string) => void;
     logout: () => void;
     isLoading: boolean;
+    notifications: AppNotification[];
+    markAllRead: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -28,6 +31,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [toasts, setToasts] = useState<{ id: number, message: string }[]>([]);
+    const [notifications, setNotifications] = useState<AppNotification[]>([]);
+
+    const markAllRead = useCallback(() => {
+        setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    }, []);
 
     const addToast = (msg: string) => {
         const id = Date.now();
@@ -36,6 +44,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setToasts(prev => prev.filter(t => t.id !== id));
         }, 5000);
     };
+
+    const addNotification = useCallback((type: string, message: string) => {
+        const n: AppNotification = { id: Date.now(), type, message, read: false, timestamp: new Date() };
+        setNotifications(prev => [...prev.slice(-49), n]);
+    }, []);
 
     useEffect(() => {
         let ws: WebSocket | null = null;
@@ -51,6 +64,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
                     if (supportedTypes.includes(data.type)) {
                         addToast(data.message);
+                        addNotification(data.type, data.message);
                     }
                 } catch (e) {
                     console.error("WS Parse error", e);
@@ -63,7 +77,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return () => {
             if (ws) ws.close();
         };
-    }, [isAuthenticated]);
+    }, [isAuthenticated, addNotification]);
 
     const fetchMe = async () => {
         try {
@@ -102,10 +116,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.removeItem('refreshToken');
         setIsAuthenticated(false);
         setCurrentUser(null);
+        setNotifications([]);
     };
 
     return (
-        <AuthContext.Provider value={{ isAuthenticated, currentUser, login, logout, isLoading }}>
+        <AuthContext.Provider value={{ isAuthenticated, currentUser, login, logout, isLoading, notifications, markAllRead }}>
             {children}
 
             {/* Toast Container */}
