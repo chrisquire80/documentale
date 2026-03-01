@@ -25,6 +25,16 @@ Object.defineProperty(window, 'matchMedia', {
 // Mock fetch if needed
 global.fetch = vi.fn();
 
+// Mock scrollIntoView (not implemented in jsdom)
+window.Element.prototype.scrollIntoView = vi.fn();
+
+// Mock WebSocket
+global.WebSocket = vi.fn().mockImplementation(() => ({
+  close: vi.fn(),
+  onmessage: null,
+  onerror: null,
+})) as any;
+
 // Mock localStorage
 const localStorageMock = {
   getItem: vi.fn(),

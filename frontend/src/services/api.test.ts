@@ -1,20 +1,11 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import axios from 'axios';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import api from './api';
 
-vi.mock('axios');
-const mockedAxios = axios as any;
+// No axios mock — we test the real interceptors on the real api instance.
+// localStorage is already mocked globally in src/test/setup.ts.
 
 describe('API Service', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    localStorage.clear();
-    localStorage.setItem = vi.fn();
-    localStorage.getItem = vi.fn();
-    localStorage.removeItem = vi.fn();
-  });
-
-  afterEach(() => {
     vi.clearAllMocks();
   });
 
@@ -22,79 +13,47 @@ describe('API Service', () => {
     expect(api.defaults.baseURL).toBe('http://localhost:8000');
   });
 
-  it('should add authorization header when token exists', async () => {
-    const mockToken = 'test-token-123';
-    vi.mocked(localStorage.getItem).mockReturnValue(mockToken);
+  it('should add authorization header when token exists', () => {
+    vi.mocked(localStorage.getItem).mockReturnValue('test-token-123');
 
-    const config = { headers: {} };
-    const result = api.interceptors.request.handlers[0].fulfilled(config);
+    const config = { headers: {} as Record<string, string> };
+    const result = (api.interceptors.request as any).handlers[0].fulfilled(config);
 
-    expect(result.headers.Authorization).toBe(`Bearer ${mockToken}`);
+    expect(result.headers.Authorization).toBe('Bearer test-token-123');
   });
 
-  it('should not add authorization header when token is missing', async () => {
+  it('should not add authorization header when token is missing', () => {
     vi.mocked(localStorage.getItem).mockReturnValue(null);
 
-    const config = { headers: {} };
-    const result = api.interceptors.request.handlers[0].fulfilled(config);
+    const config = { headers: {} as Record<string, string> };
+    const result = (api.interceptors.request as any).handlers[0].fulfilled(config);
 
     expect(result.headers.Authorization).toBeUndefined();
   });
 
-  it('should handle 401 response with token refresh', async () => {
-    const mockRefreshToken = 'refresh-token-123';
-    const mockNewAccessToken = 'new-access-token-123';
-    const mockNewRefreshToken = 'new-refresh-token-123';
-
-    vi.mocked(localStorage.getItem).mockImplementation((key) => {
-      if (key === 'refreshToken') return mockRefreshToken;
-      return null;
-    });
-
-    const originalError = {
-      response: { status: 401 },
-      config: { _retry: false, headers: {} },
-    };
-
-    mockedAxios.post.mockResolvedValueOnce({
-      data: {
-        access_token: mockNewAccessToken,
-        refresh_token: mockNewRefreshToken,
-      },
-    });
-
-    const handler = api.interceptors.response.handlers[0].rejected;
-    // This test is simplified - real implementation would be more complex
+  it('should have a response interceptor registered', () => {
+    const handler = (api.interceptors.response as any).handlers[0];
     expect(handler).toBeDefined();
+    expect(handler.rejected).toBeDefined();
   });
 
-  it('should redirect to login on 401 without refresh token', async () => {
-    vi.mocked(localStorage.getItem).mockReturnValue(null);
-
-    const originalError = {
-      response: { status: 401 },
-      config: { _retry: false, headers: {} },
-    };
-
-    const handler = api.interceptors.response.handlers[0].rejected;
-    expect(handler).toBeDefined();
-  });
-
-  it('should handle response errors properly', async () => {
-    const originalError = {
-      response: { status: 500 },
-      config: { _retry: false },
-    };
-
-    const handler = api.interceptors.response.handlers[0].rejected;
-    expect(handler).toBeDefined();
-  });
-
-  it('should pass through successful responses', async () => {
+  it('should pass through successful responses unchanged', () => {
     const response = { data: { test: 'data' }, status: 200 };
-    const handler = api.interceptors.response.handlers[0].fulfilled;
-    const result = handler(response);
-
+    const handler = (api.interceptors.response as any).handlers[0];
+    const result = handler.fulfilled(response);
     expect(result).toEqual(response);
+  });
+
+  it('should have a request interceptor registered', () => {
+    const handler = (api.interceptors.request as any).handlers[0];
+    expect(handler).toBeDefined();
+    expect(handler.fulfilled).toBeDefined();
+  });
+
+  it('should return the same config object from request interceptor', () => {
+    vi.mocked(localStorage.getItem).mockReturnValue('tok');
+    const config = { headers: {} as Record<string, string>, url: '/test' };
+    const result = (api.interceptors.request as any).handlers[0].fulfilled(config);
+    expect(result.url).toBe('/test');
   });
 });
