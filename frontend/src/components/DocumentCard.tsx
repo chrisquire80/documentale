@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2, Bot, CheckCircle, XCircle, Send } from 'lucide-react';
+import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2, Bot, CheckCircle, XCircle, Send, FolderInput } from 'lucide-react';
 import DocumentPreviewModal from './DocumentPreviewModal';
 import EditMetadataModal from './EditMetadataModal';
 import DocumentVersionModal from './DocumentVersionModal';
@@ -10,6 +10,7 @@ import CommentsPanel from './CommentsPanel';
 import UploadModal from './UploadModal';
 import RelatedDocumentsModal from './RelatedDocumentsModal';
 import AIChatModal from './AIChatModal';
+import MoveFolderModal from './MoveFolderModal';
 import { useAuth } from '../store/AuthContext';
 
 const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }> = {
@@ -40,6 +41,7 @@ const DocumentCard: React.FC<{
     const [uploadVersionOpen, setUploadVersionOpen] = useState(false);
     const [relatedOpen, setRelatedOpen] = useState(false);
     const [chatOpen, setChatOpen] = useState(false);
+    const [moveFolderOpen, setMoveFolderOpen] = useState(false);
 
     const canEdit = (currentUser?.role as string) === 'ADMIN' || currentUser?.id === doc.owner_id;
     const canReview = (currentUser?.role as string) === 'ADMIN' || (currentUser?.role as string) === 'POWER_USER' || (currentUser?.role as string) === 'power_user';
@@ -253,6 +255,9 @@ const DocumentCard: React.FC<{
                 {canEdit && (
                     <>
                         <div style={{ width: '1px', height: '16px', background: 'var(--glass)', margin: '0 0.2rem', alignSelf: 'center' }} />
+                        <button onClick={() => setMoveFolderOpen(true)} title="Sposta in cartella" className="icon-btn">
+                            <FolderInput size={16} />
+                        </button>
                         <button onClick={() => setEditOpen(true)} title="Modifica" className="icon-btn">
                             <Pencil size={16} />
                         </button>
@@ -387,6 +392,16 @@ const DocumentCard: React.FC<{
                     docId={doc.id}
                     docTitle={doc.title}
                     onClose={() => setChatOpen(false)}
+                />
+            )}
+
+            {moveFolderOpen && (
+                <MoveFolderModal
+                    docId={doc.id}
+                    docTitle={doc.title}
+                    currentFolderId={doc.folder_id ?? null}
+                    onClose={() => setMoveFolderOpen(false)}
+                    onSuccess={() => { if (onUpdate) onUpdate(); }}
                 />
             )}
         </div>

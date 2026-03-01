@@ -15,6 +15,7 @@ import type { FilterState } from '../components/SidebarFilters';
 import BulkActionBar from '../components/BulkActionBar';
 import NotificationBell from '../components/NotificationBell';
 import AIChatModal from '../components/AIChatModal';
+import FolderTree from '../components/FolderTree';
 import { Bot } from 'lucide-react';
 
 const ITEMS_PER_PAGE = 20;
@@ -48,6 +49,7 @@ const DashboardPage: React.FC = () => {
     const [isDocStatsOpen, setIsDocStatsOpen] = useState(false);
     const { currentUser, logout, notifications, markAllRead } = useAuth();
     const [isChatOpen, setIsChatOpen] = useState(false);
+    const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
 
     // Debounce
     useEffect(() => {
@@ -63,7 +65,7 @@ const DashboardPage: React.FC = () => {
     const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
     const { data, isLoading, refetch } = useQuery<PaginatedDocuments>({
-        queryKey: ['documents', debouncedQuery, filters, currentPage],
+        queryKey: ['documents', debouncedQuery, filters, currentPage, selectedFolderId],
         queryFn: async () => {
             const params = new URLSearchParams({
                 limit: String(ITEMS_PER_PAGE),
@@ -76,6 +78,7 @@ const DashboardPage: React.FC = () => {
             if (filters.date_to) params.append('date_to', filters.date_to);
             if (filters.author) params.append('author', filters.author);
             if (filters.department) params.append('department', filters.department);
+            if (selectedFolderId) params.append('folder_id', selectedFolderId);
 
             const response = await api.get(`/documents/search?${params}`);
             return response.data;
@@ -215,14 +218,30 @@ const DashboardPage: React.FC = () => {
 
             <main className="container">
                 <div className="dashboard-layout">
-                    {/* Sidebar Filtri */}
-                    <SidebarFilters
-                        availableTags={availableTags}
-                        availableAuthors={availableAuthors}
-                        availableDepartments={availableDepartments}
-                        filters={filters}
-                        onChange={setFilters}
-                    />
+                    {/* Sidebar: Cartelle + Filtri */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                        {/* Cartelle */}
+                        <div style={{
+                            background: 'var(--bg-card)', borderRadius: '0.75rem',
+                            padding: '0.9rem', border: '1px solid var(--border)',
+                        }}>
+                            <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '0.6rem' }}>
+                                Cartelle
+                            </div>
+                            <FolderTree
+                                selectedFolderId={selectedFolderId}
+                                onSelectFolder={id => { setSelectedFolderId(id); setCurrentPage(1); }}
+                            />
+                        </div>
+
+                        <SidebarFilters
+                            availableTags={availableTags}
+                            availableAuthors={availableAuthors}
+                            availableDepartments={availableDepartments}
+                            filters={filters}
+                            onChange={setFilters}
+                        />
+                    </div>
 
                     {/* Contenuto Principale */}
                     <div className="main-content">

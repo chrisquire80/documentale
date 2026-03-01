@@ -470,6 +470,7 @@ async def search_documents(
     date_to: Optional[datetime] = None,
     author: Optional[str] = None,
     department: Optional[str] = None,
+    folder_id: Optional[UUID] = None,
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
@@ -479,7 +480,7 @@ async def search_documents(
     cache_key = (
         f"docs:{current_user.id}:"
         + hashlib.md5(
-            f"{query}:{tag}:{file_type}:{date_from}:{date_to}:{author}:{department}:{limit}:{offset}".encode()
+            f"{query}:{tag}:{file_type}:{date_from}:{date_to}:{author}:{department}:{folder_id}:{limit}:{offset}".encode()
         ).hexdigest()
     )
     if redis:
@@ -548,6 +549,9 @@ async def search_documents(
     if department:
         need_meta_join = True
         filters.append(DocumentMetadata.metadata_json["dept"].astext == department)
+
+    if folder_id is not None:
+        filters.append(Document.folder_id == folder_id)
 
     count_stmt = select(func.count(distinct(Document.id))).select_from(Document)
     if need_content_join:

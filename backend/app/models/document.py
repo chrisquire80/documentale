@@ -25,6 +25,7 @@ class Document(Base):
     is_restricted = Column(Boolean, default=False, index=True)
     is_deleted = Column(Boolean, default=False, index=True)
     status = Column(SAEnum(DocumentStatus, name="document_status", create_type=True), nullable=False, default=DocumentStatus.draft, server_default="draft", index=True)
+    folder_id = Column(UUID(as_uuid=True), ForeignKey("folders.id", ondelete="SET NULL"), nullable=True, index=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -35,6 +36,7 @@ class Document(Base):
     metadata_entries = relationship("DocumentMetadata", back_populates="document", cascade="all, delete-orphan")
     content = relationship("DocumentContent", uselist=False, back_populates="document", cascade="all, delete-orphan")
     shares = relationship("DocumentShare", back_populates="document", cascade="all, delete-orphan")
+    folder = relationship("Folder", back_populates="documents")
 
     __table_args__ = (
         Index('idx_owner_restricted', 'owner_id', 'is_restricted'),

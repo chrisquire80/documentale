@@ -32,9 +32,11 @@ app.add_middleware(
 
 from .api import auth, documents, admin, shares, comments, ws, ai
 from .api import plugins as plugins_api
+from .api import folders as folders_api
 from .services import watcher
 from .models.share import DocumentPublicShare
 from .models.comment import DocumentComment
+from .models.folder import Folder
 from .plugins import registry, plugin_manager
 from .plugins.built_in import WordCountPlugin, ContentClassifierPlugin
 
@@ -46,6 +48,7 @@ app.include_router(comments.router)
 app.include_router(ws.router)
 app.include_router(ai.router, prefix="/ai", tags=["AI"])
 app.include_router(plugins_api.router)
+app.include_router(folders_api.router)
 
 # Register built-in plugins
 registry.register(WordCountPlugin())

@@ -65,6 +65,7 @@ class DocumentResponse(DocumentBase):
     owner_id: UUID
     is_deleted: bool = False
     status: DocumentStatus = DocumentStatus.draft
+    folder_id: Optional[UUID] = None
     created_at: datetime
     deleted_at: Optional[datetime] = None
 
