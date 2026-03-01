@@ -31,9 +31,12 @@ app.add_middleware(
 )
 
 from .api import auth, documents, admin, shares, comments, ws, ai
+from .api import plugins as plugins_api
 from .services import watcher
 from .models.share import DocumentPublicShare
 from .models.comment import DocumentComment
+from .plugins import registry, plugin_manager
+from .plugins.built_in import WordCountPlugin, ContentClassifierPlugin
 
 app.include_router(auth.router)
 app.include_router(documents.router)
@@ -42,6 +45,11 @@ app.include_router(shares.router)
 app.include_router(comments.router)
 app.include_router(ws.router)
 app.include_router(ai.router, prefix="/ai", tags=["AI"])
+app.include_router(plugins_api.router)
+
+# Register built-in plugins
+registry.register(WordCountPlugin())
+registry.register(ContentClassifierPlugin())
 
 
 @app.on_event("startup")
@@ -94,6 +102,9 @@ async def startup():
         """))
     print("FTS: trigger e indice GIN installati su doc_content.")
 
+    # Inizializza plugin
+    await plugin_manager.startup()
+
     # Avvia cache Redis
     await startup_redis()
 
@@ -109,6 +120,7 @@ async def startup():
 async def shutdown():
     watcher.stop_watcher()
     await shutdown_redis()
+    await plugin_manager.shutdown()
 
 
 @app.get("/")

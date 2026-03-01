@@ -98,12 +98,24 @@ async def _run_ocr_background(
     from ..services.embeddings import generate_embedding
     from ..services.langextract_service import extract_entities, entities_to_metadata_patch
     from ..core.config import settings
+    from ..plugins import plugin_manager, OCRContext, MetadataContext
 
     storage = LocalStorage()
     abs_path = await storage.get_file_path(file_rel_path)
 
     ocr_text = await extract_text(abs_path, content_type)
-    merged = f"{initial_corpus} {ocr_text}".strip() if ocr_text else initial_corpus
+
+    # Plugin hook: on_ocr_complete — plugins may modify the extracted text
+    _ocr_plugin_result = await plugin_manager.fire_on_ocr_complete(
+        OCRContext(
+            doc_id=doc_id,
+            filename=os.path.basename(file_rel_path),
+            extracted_text=ocr_text or "",
+            content_type=content_type,
+        )
+    )
+    if _ocr_plugin_result:
+        ocr_text = _ocr_plugin_result
 
     merged = f"{initial_corpus} {ocr_text}".strip()
 
@@ -132,6 +144,16 @@ async def _run_ocr_background(
                     "LangExtract: %d entità estratte per documento %s.", len(entities), doc_id
                 )
 
+    # Plugin hook: on_metadata_extracted — plugins may contribute extra metadata fields
+    _plugin_meta_patch = await plugin_manager.fire_on_metadata_extracted(
+        MetadataContext(
+            doc_id=doc_id,
+            filename=os.path.basename(file_rel_path),
+            metadata=dict(ai_metadata or {}),
+            corpus=merged,
+        )
+    )
+
     async with SessionLocal() as db:
         try:
             update_values = {"fulltext_content": merged}
@@ -145,7 +167,7 @@ async def _run_ocr_background(
             )
             await db.execute(stmt)
 
-            if ai_metadata or entity_patch:
+            if ai_metadata or entity_patch or _plugin_meta_patch:
                 meta_stmt = select(DocumentMetadata).where(DocumentMetadata.document_id == doc_id)
                 meta = (await db.execute(meta_stmt)).scalar_one_or_none()
                 if meta:
@@ -167,6 +189,10 @@ async def _run_ocr_background(
                             value = entity_patch.get(key)
                             if value:
                                 current_json[key] = value
+
+                    # Merge plugin-contributed metadata fields
+                    if _plugin_meta_patch:
+                        current_json.update(_plugin_meta_patch)
 
                     meta.metadata_json = dict(current_json)
 
@@ -885,6 +911,12 @@ async def download_document(
                     break
                 yield chunk
 
+    # Plugin hook: on_document_downloaded (fire before streaming)
+    from ..plugins import plugin_manager as _pm, DownloadContext
+    await _pm.fire_on_document_downloaded(
+        DownloadContext(doc_id=doc_id, user_id=current_user.id, filename=download_filename)
+    )
+
     disposition = "inline" if inline else "attachment"
     return StreamingResponse(
         stream_file(),
@@ -1004,19 +1036,26 @@ async def soft_delete_document(
         raise HTTPException(status_code=403, detail="Permission denied")
         
     doc.deleted_at = func.now()
-    
+    doc_title = doc.title
+
     audit = AuditLog(user_id=current_user.id, action="SOFT_DELETE", target_id=doc.id)
     db.add(audit)
-    
+
     await db.commit()
-    
+
+    # Plugin hook: on_document_deleted
+    from ..plugins import plugin_manager as _pm, DeleteContext
+    await _pm.fire_on_document_deleted(
+        DeleteContext(doc_id=doc_id, user_id=current_user.id, title=doc_title)
+    )
+
     if redis:
         try:
             async for key in redis.scan_iter(f"docs:{current_user.id}:*"):
                 await redis.delete(key)
         except Exception:
             pass
-            
+
     return {"message": "Document moved to trash"}
 
 @router.post("/{doc_id}/restore", response_model=DocumentResponse)
