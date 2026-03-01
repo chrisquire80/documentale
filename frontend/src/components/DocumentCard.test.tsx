@@ -139,24 +139,24 @@ describe('DocumentCard', () => {
 
   it('renders checkbox when onToggleSelect is provided', () => {
     render(<DocumentCard doc={mockDoc} onToggleSelect={vi.fn()} />);
-    expect(document.querySelector('.doc-checkbox-inline')).toBeInTheDocument();
+    expect(screen.getByTitle('Seleziona')).toBeInTheDocument();
   });
 
   it('calls onToggleSelect with doc id when checkbox clicked', () => {
     const mockToggle = vi.fn();
     render(<DocumentCard doc={mockDoc} onToggleSelect={mockToggle} />);
-    fireEvent.click(document.querySelector('.doc-checkbox-inline')!);
+    fireEvent.click(screen.getByTitle('Seleziona'));
     expect(mockToggle).toHaveBeenCalledWith('doc-1');
   });
 
   it('checkbox has selected class when isSelected is true', () => {
     render(<DocumentCard doc={mockDoc} onToggleSelect={vi.fn()} isSelected={true} />);
-    expect(document.querySelector('.doc-checkbox-inline')).toHaveClass('selected');
+    expect(screen.getByTitle('Seleziona')).toHaveClass('selected');
   });
 
   it('does not render checkbox when onToggleSelect is not provided', () => {
     render(<DocumentCard doc={mockDoc} />);
-    expect(document.querySelector('.doc-checkbox-inline')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Seleziona')).not.toBeInTheDocument();
   });
 
   it('renders related documents button', () => {

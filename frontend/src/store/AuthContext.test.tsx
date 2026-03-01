@@ -30,15 +30,9 @@ const AuthConsumer: React.FC = () => {
 
 describe('AuthContext', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    // mockReset: true in vitest config resets mock implementations.
+    // Re-establish localStorage default so tests start unauthenticated.
     vi.mocked(localStorage.getItem).mockReturnValue(null);
-    // mockReset (vitest config) clears mock implementations between tests,
-    // so re-establish the WebSocket mock here.
-    (global.WebSocket as ReturnType<typeof vi.fn>).mockImplementation(() => ({
-      close: vi.fn(),
-      onmessage: null,
-      onerror: null,
-    }));
   });
 
   it('throws when useAuth is used outside AuthProvider', () => {
@@ -121,7 +115,7 @@ describe('AuthContext', () => {
     render(<AuthProvider><AuthConsumer /></AuthProvider>);
     await waitFor(() => screen.getByTestId('is-loading').textContent === 'false');
 
-    act(() => {
+    await act(async () => {
       screen.getByText('Logout').click();
     });
 
@@ -138,7 +132,7 @@ describe('AuthContext', () => {
     render(<AuthProvider><AuthConsumer /></AuthProvider>);
     await waitFor(() => screen.getByTestId('is-authenticated').textContent === 'true');
 
-    act(() => {
+    await act(async () => {
       screen.getByText('Logout').click();
     });
 

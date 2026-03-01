@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import CommentsPanel from './CommentsPanel';
 
@@ -36,10 +36,6 @@ const sampleComments = [
 ];
 
 describe('CommentsPanel', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   it('shows loading state while fetching', () => {
     mockGet.mockReturnValue(new Promise(() => {})); // never resolves
     render(<CommentsPanel {...defaultProps} />);
@@ -49,7 +45,7 @@ describe('CommentsPanel', () => {
   it('shows document title in header', async () => {
     mockGet.mockResolvedValue({ data: [] });
     render(<CommentsPanel {...defaultProps} docTitle="My Document" />);
-    await waitFor(() => screen.getByText(/Non ci sono ancora/));
+    await screen.findByText(/Non ci sono ancora/);
     expect(screen.getByText('My Document')).toBeInTheDocument();
   });
 
@@ -102,19 +98,18 @@ describe('CommentsPanel', () => {
   it('renders comment input textarea', async () => {
     mockGet.mockResolvedValue({ data: [] });
     render(<CommentsPanel {...defaultProps} />);
-    await waitFor(() => screen.getByPlaceholderText('Scrivi un commento...'));
-    expect(screen.getByPlaceholderText('Scrivi un commento...')).toBeInTheDocument();
+    // findByPlaceholderText = waitFor + getByPlaceholderText combined
+    expect(await screen.findByPlaceholderText('Scrivi un commento...')).toBeInTheDocument();
   });
 
   it('submit button is disabled when textarea is empty', async () => {
     mockGet.mockResolvedValue({ data: [] });
     render(<CommentsPanel {...defaultProps} />);
-    await waitFor(() => screen.getByPlaceholderText('Scrivi un commento...'));
-    const submitBtn = document.querySelector('button[type="submit"]') as HTMLButtonElement;
-    expect(submitBtn).toBeDisabled();
+    await screen.findByPlaceholderText('Scrivi un commento...');
+    expect(document.querySelector('button[type="submit"]')).toBeDisabled();
   });
 
-  it('posts comment on form submit', async () => {
+  it('posts comment and shows it in the list', async () => {
     mockGet.mockResolvedValue({ data: [] });
     const newComment = {
       id: 'c3',
@@ -126,7 +121,7 @@ describe('CommentsPanel', () => {
     mockPost.mockResolvedValue({ data: newComment });
 
     render(<CommentsPanel {...defaultProps} />);
-    await waitFor(() => screen.getByPlaceholderText('Scrivi un commento...'));
+    await screen.findByPlaceholderText('Scrivi un commento...');
 
     fireEvent.change(screen.getByPlaceholderText('Scrivi un commento...'), {
       target: { value: 'New comment' },
@@ -137,29 +132,6 @@ describe('CommentsPanel', () => {
       expect(mockPost).toHaveBeenCalledWith('/documents/doc-1/comments', {
         content: 'New comment',
       });
-    });
-  });
-
-  it('newly posted comment appears in list', async () => {
-    mockGet.mockResolvedValue({ data: [] });
-    const newComment = {
-      id: 'c3',
-      content: 'New comment',
-      created_at: '2024-01-16T00:00:00Z',
-      parent_id: null,
-      user: { id: 'u1', email: 'alice@test.com' },
-    };
-    mockPost.mockResolvedValue({ data: newComment });
-
-    render(<CommentsPanel {...defaultProps} />);
-    await waitFor(() => screen.getByPlaceholderText('Scrivi un commento...'));
-
-    fireEvent.change(screen.getByPlaceholderText('Scrivi un commento...'), {
-      target: { value: 'New comment' },
-    });
-    fireEvent.submit(document.querySelector('form')!);
-
-    await waitFor(() => {
       expect(screen.getByText('New comment')).toBeInTheDocument();
     });
   });
@@ -177,9 +149,7 @@ describe('CommentsPanel', () => {
     });
 
     render(<CommentsPanel {...defaultProps} />);
-    await waitFor(() => screen.getByPlaceholderText('Scrivi un commento...'));
-
-    const textarea = screen.getByPlaceholderText('Scrivi un commento...');
+    const textarea = await screen.findByPlaceholderText('Scrivi un commento...');
     fireEvent.change(textarea, { target: { value: 'Hello' } });
     fireEvent.submit(document.querySelector('form')!);
 
@@ -191,7 +161,7 @@ describe('CommentsPanel', () => {
   it('shows reply indicator when Rispondi is clicked', async () => {
     mockGet.mockResolvedValue({ data: [sampleComments[0]] });
     render(<CommentsPanel {...defaultProps} />);
-    await waitFor(() => screen.getByText('Rispondi'));
+    await screen.findByText('Rispondi');
 
     fireEvent.click(screen.getByText('Rispondi'));
     expect(screen.getByText(/Stai rispondendo a/)).toBeInTheDocument();
@@ -210,7 +180,7 @@ describe('CommentsPanel', () => {
     });
 
     render(<CommentsPanel {...defaultProps} />);
-    await waitFor(() => screen.getByText('Rispondi'));
+    await screen.findByText('Rispondi');
 
     fireEvent.click(screen.getByText('Rispondi'));
     fireEvent.change(screen.getByPlaceholderText('Scrivi un commento...'), {
@@ -229,7 +199,7 @@ describe('CommentsPanel', () => {
   it('cancels reply when Annulla is clicked', async () => {
     mockGet.mockResolvedValue({ data: [sampleComments[0]] });
     render(<CommentsPanel {...defaultProps} />);
-    await waitFor(() => screen.getByText('Rispondi'));
+    await screen.findByText('Rispondi');
 
     fireEvent.click(screen.getByText('Rispondi'));
     expect(screen.getByText(/Stai rispondendo a/)).toBeInTheDocument();

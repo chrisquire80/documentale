@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import LoginPage from './LoginPage';
@@ -33,10 +33,6 @@ const renderLogin = () =>
   );
 
 describe('LoginPage', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   it('renders email, password fields and submit button', () => {
     renderLogin();
     expect(screen.getByPlaceholderText('Email')).toBeInTheDocument();

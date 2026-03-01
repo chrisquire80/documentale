@@ -1,4 +1,4 @@
-import { expect, afterEach, vi } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
@@ -28,12 +28,14 @@ global.fetch = vi.fn();
 // Mock scrollIntoView (not implemented in jsdom)
 window.Element.prototype.scrollIntoView = vi.fn();
 
-// Mock WebSocket
-global.WebSocket = vi.fn().mockImplementation(() => ({
-  close: vi.fn(),
-  onmessage: null,
-  onerror: null,
-})) as any;
+// Mock WebSocket globally. Re-established in beforeEach because mockReset: true
+// clears vi.fn() implementations between tests.
+const makeWsInstance = () => ({ close: vi.fn(), onmessage: null, onerror: null });
+global.WebSocket = vi.fn().mockImplementation(makeWsInstance) as any;
+
+beforeEach(() => {
+  (global.WebSocket as any).mockImplementation(makeWsInstance);
+});
 
 // Mock localStorage
 const localStorageMock = {

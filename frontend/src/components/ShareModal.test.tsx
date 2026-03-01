@@ -18,7 +18,6 @@ const defaultProps = {
 
 describe('ShareModal', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
     Object.assign(navigator, {
       clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
@@ -145,14 +144,13 @@ describe('ShareModal', () => {
     fireEvent.submit(document.querySelector('form')!);
     await waitFor(() => screen.getByText('Link generato!'));
 
-    // Find the copy button (it's the styled button with Copy icon next to the link input)
-    const copyBtn = document
-      .querySelector('.modal-content')!
-      .querySelector('button:not(.close-btn):not(.btn)') as HTMLButtonElement;
-    if (copyBtn) {
-      fireEvent.click(copyBtn);
-      expect(navigator.clipboard.writeText).toHaveBeenCalled();
-    }
+    // Copy button is the icon-only button adjacent to the readonly link input
+    const copyBtn = document.querySelector(
+      '.modal-content button:not(.close-btn):not(.btn)'
+    ) as HTMLButtonElement;
+    expect(copyBtn).toBeInTheDocument();
+    fireEvent.click(copyBtn);
+    expect(navigator.clipboard.writeText).toHaveBeenCalled();
   });
 
   it('Chiudi button calls onClose after link is generated', async () => {

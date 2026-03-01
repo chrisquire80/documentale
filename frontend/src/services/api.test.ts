@@ -1,14 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import api from './api';
 
 // No axios mock — we test the real interceptors on the real api instance.
 // localStorage is already mocked globally in src/test/setup.ts.
 
 describe('API Service', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   it('should create axios instance with correct baseURL', () => {
     expect(api.defaults.baseURL).toBe('http://localhost:8000');
   });
