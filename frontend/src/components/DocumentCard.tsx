@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2, Bot, CheckCircle, XCircle, Send, FolderInput, Sparkles, X } from 'lucide-react';
+import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2, Bot, CheckCircle, XCircle, Send, FolderInput, Sparkles, X, Scale } from 'lucide-react';
 import DocumentPreviewModal from './DocumentPreviewModal';
 import EditMetadataModal from './EditMetadataModal';
 import DocumentVersionModal from './DocumentVersionModal';
@@ -13,6 +13,7 @@ import AIChatModal from './AIChatModal';
 import MoveFolderModal from './MoveFolderModal';
 import ActionItemsPanel from './ActionItemsPanel';
 import DocumentLinksPanel from './DocumentLinksPanel';
+import DecisionModal from './DecisionModal';
 import { useAuth } from '../store/AuthContext';
 
 const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }> = {
@@ -45,6 +46,7 @@ const DocumentCard: React.FC<{
     const [chatOpen, setChatOpen] = useState(false);
     const [moveFolderOpen, setMoveFolderOpen] = useState(false);
     const [suggestFolderClicked, setSuggestFolderClicked] = useState(false);
+    const [decisionOpen, setDecisionOpen] = useState(false);
 
     const canEdit = (currentUser?.role as string) === 'ADMIN' || currentUser?.id === doc.owner_id;
     const canReview = (currentUser?.role as string) === 'ADMIN' || (currentUser?.role as string) === 'POWER_USER' || (currentUser?.role as string) === 'power_user';
@@ -230,6 +232,9 @@ const DocumentCard: React.FC<{
             }}>
                 <button onClick={() => setChatOpen(true)} title="Chat AI" className="icon-btn" style={{ color: 'var(--accent)' }}>
                     <Bot size={16} />
+                </button>
+                <button onClick={() => setDecisionOpen(true)} title="Analisi Decisionale (confronto con documenti correlati)" className="icon-btn" style={{ color: '#818cf8' }}>
+                    <Scale size={16} />
                 </button>
                 <button onClick={() => setCommentsOpen(true)} title="Commenti" className="icon-btn">
                     <MessageSquare size={16} />
@@ -506,6 +511,14 @@ const DocumentCard: React.FC<{
                     currentFolderId={doc.folder_id ?? null}
                     onClose={() => setMoveFolderOpen(false)}
                     onSuccess={() => { if (onUpdate) onUpdate(); }}
+                />
+            )}
+
+            {decisionOpen && (
+                <DecisionModal
+                    anchorDocId={doc.id}
+                    anchorDocTitle={doc.title}
+                    onClose={() => setDecisionOpen(false)}
                 />
             )}
         </div>

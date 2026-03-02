@@ -1,6 +1,7 @@
 import React from 'react';
-import { Download, X, Trash2 } from 'lucide-react';
+import { Download, X, Trash2, Scale } from 'lucide-react';
 import api from '../services/api';
+import DecisionModal from './DecisionModal';
 
 interface BulkActionBarProps {
     selectedIds: string[];
@@ -10,6 +11,7 @@ interface BulkActionBarProps {
 
 const BulkActionBar: React.FC<BulkActionBarProps> = ({ selectedIds, onClearSelection, onSuccess }) => {
     const [isExporting, setIsExporting] = React.useState(false);
+    const [decisionOpen, setDecisionOpen] = React.useState(false);
 
     if (selectedIds.length === 0) return null;
 
@@ -42,6 +44,13 @@ const BulkActionBar: React.FC<BulkActionBarProps> = ({ selectedIds, onClearSelec
     };
 
     return (
+        <>
+        {decisionOpen && (
+            <DecisionModal
+                documentIds={selectedIds}
+                onClose={() => setDecisionOpen(false)}
+            />
+        )}
         <div style={{
             position: 'fixed',
             bottom: '2rem',
@@ -75,6 +84,24 @@ const BulkActionBar: React.FC<BulkActionBarProps> = ({ selectedIds, onClearSelec
             <div style={{ width: '1px', height: '24px', backgroundColor: 'var(--glass)' }} />
 
             <div style={{ display: 'flex', gap: '0.75rem' }}>
+                {selectedIds.length >= 2 && (
+                    <button
+                        onClick={() => setDecisionOpen(true)}
+                        style={{
+                            display: 'flex', alignItems: 'center', gap: '0.4rem',
+                            background: 'rgba(129,140,248,0.15)',
+                            color: '#818cf8',
+                            border: '1px solid rgba(129,140,248,0.35)',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            padding: '0.5rem 1rem',
+                            borderRadius: '0.375rem',
+                        }}
+                    >
+                        <Scale size={16} />
+                        Analisi Decisionale
+                    </button>
+                )}
                 <button
                     onClick={onClearSelection}
                     disabled={isExporting}
@@ -150,6 +177,8 @@ const BulkActionBar: React.FC<BulkActionBarProps> = ({ selectedIds, onClearSelec
                 </button>
             </div>
         </div>
+        </div>
+        </>
     );
 };
 

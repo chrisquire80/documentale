@@ -34,6 +34,7 @@ from .api import auth, documents, admin, shares, comments, ws, ai
 from .api import plugins as plugins_api
 from .api import folders as folders_api
 from .api import links as links_api
+from .api import decision as decision_api
 from .services import watcher
 from .models.share import DocumentPublicShare
 from .models.comment import DocumentComment
@@ -52,6 +53,7 @@ app.include_router(ai.router, prefix="/ai", tags=["AI"])
 app.include_router(plugins_api.router)
 app.include_router(folders_api.router)
 app.include_router(links_api.router)
+app.include_router(decision_api.router, prefix="/ai", tags=["AI"])
 
 # Register built-in plugins
 registry.register(WordCountPlugin())
