@@ -1,8 +1,9 @@
 import React, { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2 } from 'lucide-react';
+import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2, Bot } from 'lucide-react';
 import DocumentPreviewModal from './DocumentPreviewModal';
+import { ChatAssistant } from './ChatAssistant';
 import EditMetadataModal from './EditMetadataModal';
 import DocumentVersionModal from './DocumentVersionModal';
 import ShareModal from './ShareModal';
@@ -31,6 +32,7 @@ const DocumentCard: React.FC<{
     const [versionOpen, setVersionOpen] = useState(false);
     const [uploadVersionOpen, setUploadVersionOpen] = useState(false);
     const [relatedOpen, setRelatedOpen] = useState(false);
+    const [chatOpen, setChatOpen] = useState(false);
 
     const canEdit = (currentUser?.role as string) === 'ADMIN' || currentUser?.id === doc.owner_id;
 
@@ -155,6 +157,10 @@ const DocumentCard: React.FC<{
                 flexWrap: 'wrap',
                 border: '1px solid var(--glass)'
             }}>
+                <button onClick={() => setChatOpen(true)} title="Chiedi all'AI" className="icon-btn" style={{ color: '#2563eb' }}>
+                    <Bot size={16} />
+                </button>
+                <div style={{ width: '1px', height: '16px', background: 'var(--glass)', margin: '0 0.1rem', alignSelf: 'center' }} />
                 <button onClick={() => setCommentsOpen(true)} title="Commenti" className="icon-btn">
                     <MessageSquare size={16} />
                 </button>
@@ -253,6 +259,15 @@ const DocumentCard: React.FC<{
                 />
             )}
 
+            {chatOpen && (
+                <ChatAssistant
+                    isOpen={chatOpen}
+                    onClose={() => setChatOpen(false)}
+                    documentId={doc.id}
+                    documentTitle={doc.title}
+                />
+            )}
+
             {editOpen && (
                 <EditMetadataModal
                     isOpen={editOpen}
@@ -296,6 +311,15 @@ const DocumentCard: React.FC<{
                         if (onUpdate) onUpdate();
                     }}
                     targetDocId={doc.id}
+                />
+            )}
+
+            {relatedOpen && (
+                <RelatedDocumentsModal
+                    isOpen={relatedOpen}
+                    onClose={() => setRelatedOpen(false)}
+                    docId={doc.id}
+                    docTitle={doc.title}
                 />
             )}
         </div>

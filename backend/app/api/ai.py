@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import text, update as sa_update
+from sqlalchemy import text, update as sa_update, and_, or_, cast
+from pgvector.sqlalchemy import Vector
 import google.generativeai as genai
 from uuid import UUID
 
@@ -35,33 +36,32 @@ async def chat_with_documents(
     if not query_embedding:
         raise HTTPException(status_code=500, detail="Impossibile generare l'embedding per la query.")
 
-    # 2. Cerca nel database con pgvector
-    # Usiamo lo spazio vettoriale cosine distance (<=>)
-    stmt = """
-        SELECT c.id, c.document_id, c.fulltext_content, d.title, d.is_restricted,
-               (c.embedding <=> :query_embedding::vector) as distance
-        FROM doc_content c
-        JOIN documents d ON c.document_id = d.id
-        WHERE d.is_deleted = false 
-          AND c.embedding IS NOT NULL
-          AND (d.owner_id = :user_id OR d.is_restricted = false)
-    """
-    
-    params = {
-        "query_embedding": str(query_embedding),
-        "user_id": str(current_user.id)
-    }
+    # 2. Cerca nel database con pgvector usando l'ORM per il corretto cast vettoriale
+    stmt = (
+        select(
+            DocumentContent.document_id,
+            DocumentContent.fulltext_content,
+            Document.title,
+            Document.is_restricted,
+            DocumentContent.embedding.cosine_distance(cast(query_embedding, Vector)).label("distance")
+        )
+        .join(Document, DocumentContent.document_id == Document.id)
+        .where(
+            Document.is_deleted == False,
+            DocumentContent.embedding.isnot(None),
+            or_(Document.owner_id == current_user.id, Document.is_restricted == False)
+        )
+    )
 
     # Se document_id è specificato, confina la ricerca
     if request.document_id:
-        stmt += " AND d.id = :doc_id"
-        params["doc_id"] = str(request.document_id)
+        stmt = stmt.where(Document.id == request.document_id)
 
-    # Ordina per similarità e limita
-    stmt += " ORDER BY distance ASC LIMIT 5"
+    # Ordina per similarità (distanza coseno minore = più simile) e limita
+    stmt = stmt.order_by("distance").limit(5)
 
     try:
-        results = await db.execute(text(stmt), params)
+        results = await db.execute(stmt)
         rows = results.fetchall()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore query database vettoriale: {str(e)}")
@@ -77,10 +77,10 @@ async def chat_with_documents(
     sources = []
     
     for row in rows:
-        # row: id, document_id, fulltext_content, title, is_restricted, distance
-        doc_id = str(row[1])
-        fulltext = row[2] or ""
-        title = row[3]
+        # row: document_id, fulltext_content, title, is_restricted, distance
+        doc_id = str(row[0])
+        fulltext = row[1] or ""
+        title = row[2]
         
         # Prendi un estratto (primi 500 caratteri)
         snippet = fulltext[:500] + "..." if len(fulltext) > 500 else fulltext

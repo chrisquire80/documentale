@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../services/api';
 import { useAuth } from '../store/AuthContext';
-import { Search, LogOut, Upload as UploadIcon, FileText, BarChart2, Trash2, Database, Shield } from 'lucide-react';
+import { Search, LogOut, Upload as UploadIcon, FileText, BarChart2, Trash2, Database, Shield, Bot } from 'lucide-react';
 import DocumentCard from '../components/DocumentCard';
+import { ChatAssistant } from '../components/ChatAssistant';
 import SkeletonCard from '../components/SkeletonCard';
 import Pagination from '../components/Pagination';
 import UploadModal from '../components/UploadModal';
@@ -43,6 +44,7 @@ const DashboardPage: React.FC = () => {
     const [isBulkOpen, setIsBulkOpen] = useState(false);
     const [isStatsOpen, setIsStatsOpen] = useState(false);
     const [isDocStatsOpen, setIsDocStatsOpen] = useState(false);
+    const [isChatOpen, setIsChatOpen] = useState(false);
     const { currentUser, logout } = useAuth();
 
     // Debounce
@@ -280,6 +282,36 @@ const DashboardPage: React.FC = () => {
             {isDocStatsOpen && (
                 <DashboardStatsModal onClose={() => setIsDocStatsOpen(false)} />
             )}
+
+            {/* Pulsante Chat Globale RAG */}
+            <button
+                onClick={() => setIsChatOpen(true)}
+                style={{
+                    position: 'fixed',
+                    bottom: '2rem',
+                    right: '2rem',
+                    width: '56px',
+                    height: '56px',
+                    borderRadius: '50%',
+                    backgroundColor: 'var(--blue-600, #2563eb)',
+                    color: 'white',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    zIndex: 40,
+                    border: 'none',
+                    transition: 'transform 0.2s',
+                    boxShadow: '0 10px 25px -5px rgba(37, 99, 235, 0.4)'
+                }}
+                onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.1)'}
+                onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                title="Google Gemini Assistant"
+            >
+                <Bot size={28} />
+            </button>
+
+            <ChatAssistant isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
         </div>
     );
 };
