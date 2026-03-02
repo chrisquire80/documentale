@@ -6,7 +6,7 @@ import mimetypes
 import os
 import aiofiles
 from datetime import datetime, timezone
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Form, Query
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, UploadFile, File, Form, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update as sa_update, delete as sa_delete, or_, and_, distinct, func, cast
@@ -97,6 +97,7 @@ async def _run_ocr_background(
     from ..services.llm_metadata import extract_metadata_from_text
     from ..services.embeddings import generate_embedding
     from ..services.langextract_service import extract_entities, entities_to_metadata_patch
+    from ..services.action_items_service import extract_action_items
     from ..core.config import settings
     from ..plugins import plugin_manager, OCRContext, MetadataContext
 
@@ -122,16 +123,21 @@ async def _run_ocr_background(
     ai_metadata = None
     ai_embedding = None
     entity_patch = {}
+    action_items_patch: dict = {}
     if run_llm:
         # Run basic metadata extraction and LangExtract entity extraction concurrently
         ai_metadata_task = asyncio.create_task(extract_metadata_from_text(merged))
         embedding_task = asyncio.create_task(generate_embedding(merged))
 
-        # LangExtract structured extraction (requires Gemini API key)
+        # LangExtract structured extraction + action items (requires Gemini API key)
         entities_task = None
+        action_items_task = None
         if settings.GEMINI_ENABLED and settings.GEMINI_API_KEY:
             entities_task = asyncio.create_task(
                 extract_entities(merged, api_key=settings.GEMINI_API_KEY)
+            )
+            action_items_task = asyncio.create_task(
+                extract_action_items(merged, api_key=settings.GEMINI_API_KEY)
             )
 
         ai_metadata = await ai_metadata_task
@@ -143,6 +149,11 @@ async def _run_ocr_background(
                 logger.info(
                     "LangExtract: %d entità estratte per documento %s.", len(entities), doc_id
                 )
+        if action_items_task is not None:
+            ai_result = await action_items_task
+            if any(ai_result.get(k) for k in ("decisions", "action_items", "open_questions")):
+                action_items_patch = ai_result
+                logger.info("Action items estratti per documento %s.", doc_id)
 
     # Plugin hook: on_metadata_extracted — plugins may contribute extra metadata fields
     _plugin_meta_patch = await plugin_manager.fire_on_metadata_extracted(
@@ -167,7 +178,7 @@ async def _run_ocr_background(
             )
             await db.execute(stmt)
 
-            if ai_metadata or entity_patch or _plugin_meta_patch:
+            if ai_metadata or entity_patch or action_items_patch or _plugin_meta_patch:
                 meta_stmt = select(DocumentMetadata).where(DocumentMetadata.document_id == doc_id)
                 meta = (await db.execute(meta_stmt)).scalar_one_or_none()
                 if meta:
@@ -187,6 +198,13 @@ async def _run_ocr_background(
                         for key in ("extracted_entities", "doc_type", "parties",
                                     "dates", "amounts", "references"):
                             value = entity_patch.get(key)
+                            if value:
+                                current_json[key] = value
+
+                    # Merge action items, decisions, open questions
+                    if action_items_patch:
+                        for key in ("decisions", "action_items", "open_questions"):
+                            value = action_items_patch.get(key)
                             if value:
                                 current_json[key] = value
 
@@ -1191,6 +1209,30 @@ async def reject_document(
         doc.owner_id,
     )
     return doc
+
+
+@router.patch("/{doc_id}/action-items")
+async def update_action_items(
+    doc_id: UUID,
+    action_items: list = Body(..., embed=True),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Aggiorna la lista action_items (es. toggle status) nel metadata del documento."""
+    doc = await _get_accessible_doc(doc_id, current_user, db)
+    if doc.owner_id != current_user.id and current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Non hai i permessi.")
+
+    meta_stmt = select(DocumentMetadata).where(DocumentMetadata.document_id == doc_id)
+    meta = (await db.execute(meta_stmt)).scalar_one_or_none()
+    if not meta:
+        raise HTTPException(status_code=404, detail="Metadati non trovati.")
+
+    current_json = dict(meta.metadata_json or {})
+    current_json["action_items"] = action_items
+    meta.metadata_json = current_json
+    await db.commit()
+    return {"ok": True}
 
 
 @router.delete("/{doc_id}/hard")

@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2, Bot, CheckCircle, XCircle, Send, FolderInput } from 'lucide-react';
+import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2, Bot, CheckCircle, XCircle, Send, FolderInput, Sparkles, X } from 'lucide-react';
 import DocumentPreviewModal from './DocumentPreviewModal';
 import EditMetadataModal from './EditMetadataModal';
 import DocumentVersionModal from './DocumentVersionModal';
@@ -11,6 +11,8 @@ import UploadModal from './UploadModal';
 import RelatedDocumentsModal from './RelatedDocumentsModal';
 import AIChatModal from './AIChatModal';
 import MoveFolderModal from './MoveFolderModal';
+import ActionItemsPanel from './ActionItemsPanel';
+import DocumentLinksPanel from './DocumentLinksPanel';
 import { useAuth } from '../store/AuthContext';
 
 const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }> = {
@@ -42,6 +44,7 @@ const DocumentCard: React.FC<{
     const [relatedOpen, setRelatedOpen] = useState(false);
     const [chatOpen, setChatOpen] = useState(false);
     const [moveFolderOpen, setMoveFolderOpen] = useState(false);
+    const [suggestFolderClicked, setSuggestFolderClicked] = useState(false);
 
     const canEdit = (currentUser?.role as string) === 'ADMIN' || currentUser?.id === doc.owner_id;
     const canReview = (currentUser?.role as string) === 'ADMIN' || (currentUser?.role as string) === 'POWER_USER' || (currentUser?.role as string) === 'power_user';
@@ -58,6 +61,34 @@ const DocumentCard: React.FC<{
             queryClient.invalidateQueries({ queryKey: ['documents'] });
             if (onUpdate) onUpdate();
         }
+    });
+
+    // Smart folder suggestion
+    const { data: folderSuggestion, isFetching: suggestingFolder } = useQuery({
+        queryKey: ['suggest-folder', doc.id],
+        queryFn: async () => {
+            const token = localStorage.getItem('token');
+            const res = await axios.get(`${BASE_URL}/api/ai/suggest-folder/${doc.id}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            return res.data as { folder_id: string | null; folder_name: string | null; confidence: number; reason: string };
+        },
+        enabled: suggestFolderClicked,
+        retry: false,
+    });
+
+    const acceptFolderMutation = useMutation({
+        mutationFn: (folderId: string) => {
+            const token = localStorage.getItem('token');
+            return axios.patch(`${BASE_URL}/api/folders/${folderId}/documents/${doc.id}`, {}, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['documents'] });
+            setSuggestFolderClicked(false);
+            if (onUpdate) onUpdate();
+        },
     });
 
     const workflowMutation = useMutation({
@@ -258,6 +289,17 @@ const DocumentCard: React.FC<{
                         <button onClick={() => setMoveFolderOpen(true)} title="Sposta in cartella" className="icon-btn">
                             <FolderInput size={16} />
                         </button>
+                        {!doc.folder_id && (
+                            <button
+                                onClick={() => setSuggestFolderClicked(true)}
+                                title="Suggerisci cartella (AI)"
+                                className="icon-btn"
+                                style={{ color: '#a855f7' }}
+                                disabled={suggestingFolder}
+                            >
+                                <Sparkles size={16} />
+                            </button>
+                        )}
                         <button onClick={() => setEditOpen(true)} title="Modifica" className="icon-btn">
                             <Pencil size={16} />
                         </button>
@@ -315,6 +357,68 @@ const DocumentCard: React.FC<{
                     </span>
                 ))}
             </div>
+
+            {/* AI Folder Suggestion */}
+            {suggestingFolder && (
+                <div style={{ marginTop: 8, fontSize: 12, color: '#a855f7' }}>✨ Analisi in corso...</div>
+            )}
+            {folderSuggestion && !suggestingFolder && (
+                <div style={{
+                    marginTop: 8, padding: '8px 12px', borderRadius: 8,
+                    background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.3)',
+                    fontSize: 12,
+                }}>
+                    {folderSuggestion.folder_id ? (
+                        <>
+                            <div style={{ color: '#c4b5fd', fontWeight: 600, marginBottom: 4 }}>
+                                ✨ AI suggerisce: <strong>{folderSuggestion.folder_name}</strong>
+                                <span style={{ fontWeight: 400, color: '#94a3b8', marginLeft: 6 }}>
+                                    ({Math.round((folderSuggestion.confidence ?? 0) * 100)}% confidenza)
+                                </span>
+                            </div>
+                            <div style={{ color: '#94a3b8', marginBottom: 8 }}>{folderSuggestion.reason}</div>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                                <button
+                                    onClick={() => acceptFolderMutation.mutate(folderSuggestion.folder_id!)}
+                                    disabled={acceptFolderMutation.isPending}
+                                    style={{
+                                        padding: '3px 10px', borderRadius: 6, border: 'none',
+                                        background: '#a855f7', color: '#fff', fontSize: 11, cursor: 'pointer',
+                                    }}
+                                >
+                                    Accetta
+                                </button>
+                                <button
+                                    onClick={() => setSuggestFolderClicked(false)}
+                                    style={{
+                                        padding: '3px 10px', borderRadius: 6,
+                                        border: '1px solid rgba(255,255,255,0.1)',
+                                        background: 'transparent', color: '#94a3b8', fontSize: 11, cursor: 'pointer',
+                                    }}
+                                >
+                                    Ignora
+                                </button>
+                            </div>
+                        </>
+                    ) : (
+                        <div style={{ color: '#94a3b8' }}>
+                            ✨ {folderSuggestion.reason}
+                            <button
+                                onClick={() => setSuggestFolderClicked(false)}
+                                style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}
+                            >
+                                <X size={12} />
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Action Items Panel */}
+            <ActionItemsPanel docId={doc.id} metadata={doc.doc_metadata ?? {}} />
+
+            {/* Document Links Panel */}
+            <DocumentLinksPanel docId={doc.id} docTitle={doc.title} canEdit={canEdit} />
 
             {/* Streaming download progress bar */}
             {progress !== null && (
