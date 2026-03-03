@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { X, FileText, ZoomIn, ZoomOut, Bot, Sparkles } from 'lucide-react';
+import { X, FileText, ZoomIn, ZoomOut, Sparkles } from 'lucide-react';
 import { ChatAssistant } from './ChatAssistant';
 import type { ChatAssistantHandle } from './ChatAssistant';
 import PdfViewer from './PdfViewer';

@@ -1,0 +1,91 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-8.0.0, pluggy-1.6.0
+rootdir: C:\Users\ChristianRobecchi\Downloads\Documentale\backend
+configfile: pytest.ini
+testpaths: tests
+plugins: anyio-4.12.1, asyncio-0.23.5, cov-7.0.0
+asyncio: mode=Mode.AUTO
+collected 476 items / 4 errors
+
+=================================== ERRORS ====================================
+_____________________ ERROR collecting tests/test_auth.py _____________________
+tests\test_auth.py:17: in <module>
+    from app.core.security import (
+app\core\security.py:5: in <module>
+    from .config import settings
+app\core\config.py:25: in <module>
+    settings = Settings()
+..\..\..\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pydantic_settings\main.py:71: in __init__
+    super().__init__(
+E   pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings
+E   DATABASE_URL
+E     Field required [type=missing, input_value={}, input_type=dict]
+E       For further information visit https://errors.pydantic.dev/2.12/v/missing
+E   SECRET_KEY
+E     Field required [type=missing, input_value={}, input_type=dict]
+E       For further information visit https://errors.pydantic.dev/2.12/v/missing
+___________________ ERROR collecting tests/test_auth_api.py ___________________
+tests\test_auth_api.py:11: in <module>
+    from app.core.security import (
+app\core\security.py:5: in <module>
+    from .config import settings
+app\core\config.py:25: in <module>
+    settings = Settings()
+..\..\..\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pydantic_settings\main.py:71: in __init__
+    super().__init__(
+E   pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings
+E   DATABASE_URL
+E     Field required [type=missing, input_value={}, input_type=dict]
+E       For further information visit https://errors.pydantic.dev/2.12/v/missing
+E   SECRET_KEY
+E     Field required [type=missing, input_value={}, input_type=dict]
+E       For further information visit https://errors.pydantic.dev/2.12/v/missing
+___________________ ERROR collecting tests/test_security.py ___________________
+tests\test_security.py:3: in <module>
+    from app.core.security import create_access_token
+app\core\security.py:5: in <module>
+    from .config import settings
+app\core\config.py:25: in <module>
+    settings = Settings()
+..\..\..\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pydantic_settings\main.py:71: in __init__
+    super().__init__(
+E   pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings
+E   DATABASE_URL
+E     Field required [type=missing, input_value={}, input_type=dict]
+E       For further information visit https://errors.pydantic.dev/2.12/v/missing
+E   SECRET_KEY
+E     Field required [type=missing, input_value={}, input_type=dict]
+E       For further information visit https://errors.pydantic.dev/2.12/v/missing
+___________________ ERROR collecting tests/test_storage.py ____________________
+tests\test_storage.py:16: in <module>
+    from app.core.storage import LocalStorage, get_storage
+app\core\storage.py:6: in <module>
+    from .config import settings
+app\core\config.py:25: in <module>
+    settings = Settings()
+..\..\..\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pydantic_settings\main.py:71: in __init__
+    super().__init__(
+E   pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings
+E   DATABASE_URL
+E     Field required [type=missing, input_value={}, input_type=dict]
+E       For further information visit https://errors.pydantic.dev/2.12/v/missing
+E   SECRET_KEY
+E     Field required [type=missing, input_value={}, input_type=dict]
+E       For further information visit https://errors.pydantic.dev/2.12/v/missing
+============================== warnings summary ===============================
+..\..\..\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pytest_asyncio\plugin.py:168: 37595 warnings
+  C:\Users\ChristianRobecchi\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pytest_asyncio\plugin.py:168: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    return asyncio.iscoroutinefunction(obj) or inspect.isasyncgenfunction(obj)
+
+..\..\..\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pytest_asyncio\plugin.py:433: 476 warnings
+  C:\Users\ChristianRobecchi\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pytest_asyncio\plugin.py:433: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    return asyncio.iscoroutinefunction(func)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+ERROR tests/test_auth.py - pydantic_core._pydantic_core.ValidationError: 2 va...
+ERROR tests/test_auth_api.py - pydantic_core._pydantic_core.ValidationError: ...
+ERROR tests/test_security.py - pydantic_core._pydantic_core.ValidationError: ...
+ERROR tests/test_storage.py - pydantic_core._pydantic_core.ValidationError: 2...
+!!!!!!!!!!!!!!!!!!! Interrupted: 4 errors during collection !!!!!!!!!!!!!!!!!!!
+====================== 38071 warnings, 4 errors in 3.33s ======================

@@ -43,8 +43,7 @@ describe('API Service', () => {
 
   it('should handle 401 response with token refresh', async () => {
     const mockRefreshToken = 'refresh-token-123';
-    const mockNewAccessToken = 'new-access-token-123';
-    const mockNewRefreshToken = 'new-refresh-token-123';
+    // Simplified test - variables removed as they were unused in this mockup
 
     vi.mocked(localStorage.getItem).mockImplementation((key) => {
       if (key === 'refreshToken') return mockRefreshToken;

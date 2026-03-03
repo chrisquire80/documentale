@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
-import { Send, X, Bot, User, Loader2, Minimize2, Maximize2, ExternalLink, Download, Layout, Minimize } from 'lucide-react';
+import { Send, X, Bot, Loader2, Minimize2, Maximize2, ExternalLink, Download, Layout } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import axios from 'axios';
 
@@ -56,7 +56,6 @@ const ChatAssistantBase: React.ForwardRefRenderFunction<ChatAssistantHandle, Cha
     const [isLoading, setIsLoading] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
     const [suggestions, setSuggestions] = useState<string[]>([]);
-    const [suggestionsLoading, setSuggestionsLoading] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const scrollToBottom = useCallback(() => {
@@ -81,14 +80,12 @@ const ChatAssistantBase: React.ForwardRefRenderFunction<ChatAssistantHandle, Cha
     // Suggerimenti contestuali
     useEffect(() => {
         if (!isOpen) return;
-        setSuggestionsLoading(true);
         const token = localStorage.getItem('token');
         api.post('/ai/suggestions', { document_id: documentId, document_title: documentTitle }, {
             headers: { Authorization: `Bearer ${token}` }
         })
             .then(r => setSuggestions(r.data.suggestions || []))
-            .catch(() => setSuggestions([]))
-            .finally(() => setSuggestionsLoading(false));
+            .catch(() => setSuggestions([]));
     }, [isOpen, documentId, documentTitle]);
 
     const sendMessage = useCallback(async (text: string) => {

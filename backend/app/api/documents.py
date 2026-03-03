@@ -604,6 +604,12 @@ async def search_documents(
     for row in results:
         doc_obj = row[0]
         snippet = row.snippet if len(row) > 1 and row.snippet else None
+        
+        # Fallback snippet if ts_headline failed (common in semantic-only matches)
+        if not snippet and doc_obj.content:
+            text = doc_obj.content.fulltext_content or ""
+            snippet = text[:200] + ("..." if len(text) > 200 else "")
+
         setattr(doc_obj, 'highlight_snippet', snippet)
         setattr(doc_obj, 'is_indexed', doc_obj.id in indexed_ids)
         parsed_items.append(DocumentResponse.model_validate(doc_obj))

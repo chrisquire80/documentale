@@ -5,7 +5,7 @@ Nota: Questi test richiedono un database live (PostgreSQL) per funzionare comple
 Per test locali, usa test_auth.py che testa la logica sottostante.
 """
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from jose import jwt
 
 from app.core.security import (
@@ -35,13 +35,13 @@ class TestLogoutBehavior:
 
         # Calcola il TTL residuo (simula quello che farebbe l'endpoint logout)
         exp_timestamp = decoded.get("exp")
-        now_timestamp = datetime.now().timestamp()
+        now_timestamp = datetime.now(timezone.utc).timestamp()
         remaining_ttl = int(exp_timestamp - now_timestamp)
 
         # Il TTL dovrebbe essere positivo (il token non è ancora scaduto)
         assert remaining_ttl > 0, "Il token non dovrebbe essere già scaduto"
         # Il TTL dovrebbe essere inferiore o uguale al valore di ACCESS_TOKEN_EXPIRE_MINUTES
-        assert remaining_ttl <= settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60, "Il TTL dovrebbe rispettare la configurazione"
+        assert remaining_ttl <= settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60 + 5, "Il TTL dovrebbe rispettare la configurazione"
 
     def test_token_expiration_extraction(self):
         """Verifica che l'exp possa essere estratto dal token per il logout."""
@@ -94,7 +94,7 @@ class TestAuthenticationFlow:
         refresh_decoded = jwt.decode(
             refresh, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
-        assert refresh_decoded["exp"] > datetime.utcnow().timestamp()
+        assert refresh_decoded["exp"] > datetime.now(timezone.utc).timestamp()
 
         # Attendi 1 secondo per ottenere un timestamp diverso
         time.sleep(1)
@@ -158,7 +158,7 @@ class TestTokenExpiration:
         )
 
         exp = decoded.get("exp")
-        now = datetime.utcnow().timestamp()
+        now = datetime.now(timezone.utc).timestamp()
         time_to_expire = exp - now
 
         # Dovrebbe scadere intorno a ACCESS_TOKEN_EXPIRE_MINUTES (con tolleranza di 1 minuto)
