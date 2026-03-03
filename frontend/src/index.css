@@ -20,9 +20,11 @@ body {
 }
 
 .container {
-  max-width: 1200px;
+  width: 100%;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 2rem;
+  box-sizing: border-box;
 }
 
 .auth-card {
@@ -393,29 +395,128 @@ body {
 
 /* ── Dashboard Layout & Sidebar ── */
 .dashboard-layout {
-  display: grid;
-  grid-template-columns: 260px 1fr;
-  gap: 2rem;
+  display: grid !important;
+  grid-template-columns: 280px 1fr !important;
+  grid-template-areas: "sidebar main" !important;
+  gap: 2.5rem;
   align-items: start;
+  width: 100%;
 }
 
 @media (max-width: 768px) {
   .dashboard-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr !important;
+    grid-template-areas: "sidebar" "main" !important;
   }
 }
 
 .sidebar-filters {
+  grid-area: sidebar !important;
   background: var(--bg-card);
   padding: 1.5rem;
   border-radius: 0.75rem;
   border: 1px solid var(--glass);
   position: sticky;
   top: 2rem;
+  width: 280px;
+  box-sizing: border-box;
+  z-index: 10;
 }
 
 .main-content {
+  grid-area: main !important;
   min-width: 0;
+}
+
+/* ── Chat Assistant Premium Styles ── */
+.chat-window {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  width: 400px;
+  height: 600px;
+  max-height: calc(100vh - 3rem);
+  background: var(--bg-card);
+  border: 1px solid var(--glass);
+  border-radius: 1.25rem;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+  overflow: hidden;
+  animation: slideInUp 0.3s ease-out;
+}
+
+.chat-window.expanded {
+  width: 700px;
+  height: 80vh;
+}
+
+.chat-header {
+  padding: 1rem 1.25rem;
+  background: linear-gradient(135deg, var(--accent) 0%, #1d4ed8 100%);
+  color: var(--bg-dark);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  background: rgba(15, 23, 42, 0.2);
+}
+
+.chat-input-area {
+  padding: 1rem;
+  background: var(--bg-card);
+  border-top: 1px solid var(--glass);
+}
+
+.chat-input-container {
+  display: flex;
+  gap: 0.75rem;
+  background: var(--bg-dark);
+  border: 1px solid var(--glass);
+  border-radius: 2rem;
+  padding: 0.25rem 0.25rem 0.25rem 1rem;
+  align-items: center;
+}
+
+.chat-input-container input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  font-size: 0.875rem;
+  outline: none;
+  padding: 0.5rem 0;
+}
+
+@keyframes slideInUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 480px) {
+  .chat-window {
+    width: 100%;
+    height: 100%;
+    bottom: 0;
+    right: 0;
+    border-radius: 0;
+  }
 }
 
 /* ── Highlight PostgreSQL ts_headline ── */
@@ -427,4 +528,1147 @@ mark {
   padding: 0 0.2rem;
   border-radius: 0.2rem;
   font-weight: 500;
+}
+
+/* ────────────────────────────────────────────────────── Wave 1 ── */
+
+/* Cestino button — grigio, diventa rosso solo al hover */
+.btn-trash {
+  width: auto;
+  background: transparent;
+  border: 1px solid var(--glass);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.btn-trash:hover {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+/* AI Indexing Status Badge */
+.index-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.index-badge.indexed {
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
+.index-badge.not-indexed {
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--text-muted);
+  border: 1px solid var(--glass);
+}
+
+.index-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.indexed .index-badge-dot {
+  background: #4ade80;
+  box-shadow: 0 0 5px rgba(74, 222, 128, 0.8);
+}
+
+.not-indexed .index-badge-dot {
+  background: var(--text-muted);
+}
+
+/* View toolbar (count + toggle) */
+.view-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  /* PDF Text Layer */
+  .pdf-container {
+    position: relative;
+    overflow: auto;
+    background: #525659;
+    padding: 2rem;
+    display: flex;
+    justify-content: center;
+  }
+
+  .pdf-page-wrapper {
+    position: relative;
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+  }
+
+  .textLayer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    overflow: hidden;
+    opacity: 0.2;
+    /* Show text layer for debugging, should be transparent in final */
+    line-height: 1.0;
+  }
+
+  .textLayer>span {
+    color: transparent;
+    position: absolute;
+    white-space: pre;
+    cursor: text;
+    transform-origin: 0% 0%;
+  }
+
+  /* Floating Ask AI Button */
+  .floating-ai-btn {
+    position: absolute;
+    z-index: 1000;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 2rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    animation: fadeInScale 0.2s ease-out;
+  }
+
+  .floating-ai-btn:hover {
+    background: var(--accent-hover);
+    transform: translateY(-2px);
+  }
+
+  @keyframes fadeInScale {
+    from {
+      opacity: 0;
+      transform: scale(0.9);
+    }
+
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  margin-bottom: 0.75rem;
+}
+
+.doc-count {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.view-toggle {
+  display: flex;
+  background: var(--bg-card);
+  border: 1px solid var(--glass);
+  border-radius: 0.4rem;
+  overflow: hidden;
+}
+
+.view-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem 0.6rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s;
+}
+
+.view-toggle-btn:hover {
+  background: var(--glass);
+  color: var(--text-main);
+}
+
+.view-toggle-btn.active {
+  background: var(--accent);
+  color: var(--bg-dark);
+}
+
+/* ── Document List View ── */
+.doc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  animation: fadeIn 0.2s ease;
+}
+
+.doc-row {
+  display: grid;
+  grid-template-columns: 1fr minmax(120px, 180px) 130px auto;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--glass);
+  border-radius: 0.5rem;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.doc-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(56, 189, 248, 0.2);
+}
+
+.doc-row.selected {
+  border-color: var(--accent);
+  background: rgba(56, 189, 248, 0.04);
+}
+
+/* When checkbox is present, add an extra leading column */
+.doc-row:has(.doc-checkbox-inline) {
+  grid-template-columns: 1.5rem 1fr minmax(120px, 180px) 130px auto;
+}
+
+.doc-row-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.doc-row-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.doc-row-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.doc-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.doc-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex-shrink: 0;
+}
+
+/* icon-btn danger variant */
+.icon-btn-danger {
+  color: var(--text-muted) !important;
+  transition: color 0.15s !important;
+}
+
+.icon-btn-danger:hover {
+  color: var(--error) !important;
+}
+
+/* Chat FAB */
+.chat-fab {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg-dark);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 40;
+  border: none;
+  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 4px 20px rgba(56, 189, 248, 0.4);
+}
+
+.chat-fab:hover {
+  box-shadow: 0 6px 30px rgba(56, 189, 248, 0.6);
+}
+
+/* ────────────────────────────────────────────── Wave 2 Chat Redesign ── */
+
+/* ── Floating chat window (unchanged position, kept compatible) ── */
+.chat-window {
+  position: fixed;
+  bottom: 5.5rem;
+  right: 2rem;
+  width: 360px;
+  max-height: 80vh;
+  background: var(--bg-card);
+  border: 1px solid var(--glass);
+  border-radius: 1rem;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+  overflow: hidden;
+  animation: slideInUp 0.25s ease;
+}
+
+.chat-window.expanded {
+  width: 520px;
+  max-height: 90vh;
+}
+
+/* ── Docked side panel ── */
+.chat-panel-docked {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 380px;
+  height: 100vh;
+  background: var(--bg-card);
+  border-left: 1px solid rgba(56, 189, 248, 0.2);
+  box-shadow: -6px 0 30px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  z-index: 45;
+  animation: slideInRight 0.3s ease;
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* When chat is docked, push main layout left */
+.dashboard-layout.docked {
+  margin-right: 380px;
+  transition: margin-right 0.3s ease;
+}
+
+/* ── Chat Header ── */
+.chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.9rem 1rem;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.15), rgba(99, 102, 241, 0.1));
+  border-bottom: 1px solid var(--glass);
+  flex-shrink: 0;
+}
+
+.chat-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.chat-header-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.chat-header-subtitle {
+  margin: 0;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-header-actions {
+  display: flex;
+  gap: 0.2rem;
+}
+
+.chat-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem;
+  background: transparent;
+  border: none;
+  border-radius: 0.4rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.chat-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+}
+
+/* ── Messages ── */
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--glass) transparent;
+}
+
+.chat-msg-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.chat-msg-row.user {
+  flex-direction: row-reverse;
+}
+
+.chat-avatar {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-avatar.user {
+  background: #2563eb;
+  color: #fff;
+}
+
+.chat-avatar.assistant {
+  background: #374151;
+  color: #93c5fd;
+}
+
+.chat-bubble {
+  max-width: 80%;
+  padding: 0.6rem 0.9rem;
+  border-radius: 1rem;
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.chat-bubble.user {
+  background: #2563eb;
+  color: #fff;
+  border-top-right-radius: 0.2rem;
+}
+
+.chat-bubble.assistant {
+  background: #1f2937;
+  color: #e5e7eb;
+  border: 1px solid #374151;
+  border-top-left-radius: 0.2rem;
+}
+
+.chat-bubble p {
+  margin: 0 0 0.3rem;
+}
+
+/* ── Sources ── */
+.chat-sources {
+  margin-top: 0.6rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chat-sources-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 0.4rem;
+}
+
+.chat-sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.chat-source-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.4rem;
+  border: 1px solid #374151;
+  cursor: default;
+}
+
+.chat-source-ref {
+  background: rgba(37, 99, 235, 0.3);
+  color: #93c5fd;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.2rem;
+  flex-shrink: 0;
+}
+
+.chat-source-title {
+  font-size: 0.7rem;
+  color: #9ca3af;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-source-link {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6b7280;
+  padding: 0.1rem;
+  border-radius: 0.2rem;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+
+.chat-source-link:hover {
+  color: var(--accent);
+}
+
+.chat-source-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 0.4rem);
+  left: 0;
+  width: 220px;
+  padding: 0.6rem;
+  background: #111827;
+  border: 1px solid #374151;
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+  z-index: 60;
+}
+
+.chat-source-tooltip p {
+  margin: 0;
+  font-size: 0.72rem;
+  color: #d1d5db;
+  line-height: 1.45;
+}
+
+.chat-source-item:hover .chat-source-tooltip {
+  display: block;
+}
+
+/* ── Loading indicator ── */
+.chat-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+  padding-left: 2.2rem;
+  margin-top: 0.25rem;
+}
+
+/* ── Suggestions ── */
+.chat-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.5rem 0.9rem;
+  border-top: 1px solid var(--glass);
+  background: rgba(0, 0, 0, 0.15);
+  flex-shrink: 0;
+}
+
+.chat-suggestion-chip {
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  color: var(--accent);
+  font-size: 0.72rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  text-align: left;
+}
+
+.chat-suggestion-chip:hover {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: var(--accent);
+}
+
+.chat-suggestions-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  border-top: 1px solid var(--glass);
+}
+
+/* ── Input area (kept compatible with existing chat-input-area / chat-input-container) ── */
+.chat-send-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem;
+  flex-shrink: 0;
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.chat-send-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.chat-send-btn:not(:disabled):hover {
+  background: #1d4ed8;
+}
+
+/* ── AI Suggest tags button in EditMetadataModal ── */
+.btn-ai-suggest {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.7rem;
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  color: #a78bfa;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+  height: 100%;
+}
+
+.btn-ai-suggest:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.25);
+  border-color: #a78bfa;
+}
+
+.btn-ai-suggest:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   WAVE 3 — Compare Modal, Semantic Toggle, Drag & Drop
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Compare Modal ──────────────────────────────────────────────────────────── */
+.compare-modal {
+  max-width: 860px;
+  width: 95vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 1rem;
+  overflow: hidden;
+}
+
+.compare-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--glass);
+  flex-shrink: 0;
+}
+
+.compare-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.compare-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1rem;
+  text-align: center;
+  gap: 0.75rem;
+  color: var(--text-muted);
+}
+
+.compare-result {
+  line-height: 1.7;
+  font-size: 0.95rem;
+}
+
+.compare-result h2 {
+  font-size: 1.2rem;
+  color: var(--accent);
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--glass);
+  padding-bottom: 0.4rem;
+}
+
+.compare-result h3 {
+  font-size: 1.05rem;
+  color: var(--text-main);
+  margin-top: 1rem;
+}
+
+.compare-result ul,
+.compare-result ol {
+  padding-left: 1.5rem;
+}
+
+.compare-result li {
+  margin-bottom: 0.35rem;
+}
+
+/* ── Search Mode Toggle ────────────────────────────────────────────────────── */
+.search-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.85rem;
+  background: var(--glass);
+  border: 1px solid var(--glass);
+  border-radius: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+  height: 3rem;
+}
+
+.search-mode-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.search-mode-toggle.active {
+  background: rgba(139, 92, 246, 0.15);
+  border-color: rgba(139, 92, 246, 0.5);
+  color: #a78bfa;
+  box-shadow: 0 0 12px -2px rgba(139, 92, 246, 0.3);
+}
+
+.search-mode-toggle.active:hover {
+  background: rgba(139, 92, 246, 0.25);
+}
+
+/* ── Drag & Drop: Tag Drop Targets ─────────────────────────────────────────── */
+.tag-drop-target {
+  padding: 0.35rem 0.5rem;
+  border-radius: 0.4rem;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.tag-drop-target.tag-drop-active {
+  background: rgba(56, 189, 248, 0.1);
+  border-color: rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 14px -3px rgba(56, 189, 248, 0.4);
+  transform: scale(1.02);
+}
+
+/* ── Drag & Drop: Draggable Cards & Rows ───────────────────────────────────── */
+.doc-card[draggable="true"],
+.doc-row[draggable="true"] {
+  cursor: grab;
+}
+
+.doc-card[draggable="true"]:active,
+.doc-row[draggable="true"]:active {
+  cursor: grabbing;
+  opacity: 0.7;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   WAVE 4 — Focus View (Split View) + Hover Preview
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Focus View Container ──────────────────────────────────────────────────── */
+.focus-view {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: var(--bg-dark);
+  display: flex;
+  flex-direction: column;
+  animation: focusFadeIn 0.25s ease;
+}
+
+@keyframes focusFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Focus Header ──────────────────────────────────────────────────────────── */
+.focus-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.25rem;
+  background: rgba(0, 0, 0, 0.4);
+  border-bottom: 1px solid var(--glass);
+  flex-shrink: 0;
+  gap: 1rem;
+}
+
+.focus-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.focus-header-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-shrink: 0;
+}
+
+.focus-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  background: var(--glass);
+  border: 1px solid var(--glass);
+  border-radius: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.focus-back-btn:hover {
+  background: var(--accent);
+  color: var(--bg-dark);
+  border-color: var(--accent);
+}
+
+.focus-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--glass);
+}
+
+.focus-file-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.focus-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.focus-tags {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.focus-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  background: var(--glass);
+  border-radius: 0.5rem;
+  padding: 0.2rem 0.4rem;
+}
+
+.focus-zoom-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  min-width: 2.5rem;
+  text-align: center;
+}
+
+/* ── Focus Split Layout ────────────────────────────────────────────────────── */
+.focus-split {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.focus-viewer {
+  flex: 65;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--glass);
+}
+
+.focus-chat {
+  flex: 35;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 320px;
+  max-width: 480px;
+}
+
+/* Override chat assistant styles when inside focus view */
+.focus-chat .chat-assistant {
+  position: static !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-height: none !important;
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* ── Focus Viewer Content ──────────────────────────────────────────────────── */
+.focus-summary {
+  padding: 0.75rem 1rem;
+  background: rgba(139, 92, 246, 0.05);
+  border-bottom: 1px solid rgba(139, 92, 246, 0.15);
+  flex-shrink: 0;
+}
+
+.focus-summary-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.8rem;
+  margin-bottom: 0.35rem;
+}
+
+.focus-summary-text {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.focus-document {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  background: #e5e7eb;
+}
+
+.focus-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: white;
+}
+
+.focus-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.focus-unsupported {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 3rem;
+  color: #4b5563;
+  text-align: center;
+}
+
+/* ── Hover Preview Tooltip ─────────────────────────────────────────────────── */
+.doc-card h3 {
+  position: relative;
+}
+
+.hover-preview-tooltip {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  margin-top: 0.3rem;
+  padding: 0.6rem 0.75rem;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid var(--glass);
+  border-radius: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1.4;
+  max-height: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  animation: tooltipFadeIn 0.15s ease;
+}
+
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.doc-card h3:hover+.hover-preview-tooltip,
+.doc-card .hover-preview-tooltip:hover {
+  display: block;
+}
+
+/* Make H3 wrapper position:relative for tooltip positioning */
+.doc-card>div:first-child {
+  position: relative;
+}
+
+/* ── PDF.js Viewer ─────────────────────────────────────────────────────────── */
+.pdf-viewer {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #2d2d2d;
+}
+
+.pdf-viewer-loading,
+.pdf-viewer-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  width: 100%;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  background: var(--bg-dark);
+}
+
+.pdf-spinner {
+  animation: spin 1s linear infinite;
+}
+
+.pdf-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: rgba(0, 0, 0, 0.5);
+  border-bottom: 1px solid var(--glass);
+  flex-shrink: 0;
+}
+
+.pdf-page-info {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  min-width: 4rem;
+  text-align: center;
+}
+
+.pdf-canvas-container {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.pdf-canvas {
+  max-width: 100%;
+  height: auto;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+
+.chat-source-page {
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--accent);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  padding: 1px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-weight: 600;
+}
+
+.chat-source-page:hover {
+  background: var(--accent);
+  color: white;
 }

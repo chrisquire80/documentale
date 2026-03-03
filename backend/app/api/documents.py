@@ -444,6 +444,7 @@ async def search_documents(
     date_to: Optional[datetime] = None,
     author: Optional[str] = None,
     department: Optional[str] = None,
+    mode: Optional[str] = Query(None, description="'semantic' per ricerca solo vettoriale"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
@@ -453,7 +454,7 @@ async def search_documents(
     cache_key = (
         f"docs:{current_user.id}:"
         + hashlib.md5(
-            f"{query}:{tag}:{file_type}:{date_from}:{date_to}:{author}:{department}:{limit}:{offset}".encode()
+            f"{query}:{tag}:{file_type}:{date_from}:{date_to}:{author}:{department}:{mode}:{limit}:{offset}".encode()
         ).hexdigest()
     )
     if redis:
@@ -490,17 +491,27 @@ async def search_documents(
         from ..services.embeddings import generate_query_embedding
         query_emb = await generate_query_embedding(query)
 
-        fts_condition = and_(
-            DocumentContent.search_vector.isnot(None),
-            DocumentContent.search_vector.op("@@")(func.plainto_tsquery("italian", query)),
-        )
-
-        if query_emb:
-            # Distanza coseno < 0.65 equivale a similarità > 0.35 (buono per Gemini)
-            semantic_condition = DocumentContent.embedding.cosine_distance(cast(query_emb, Vector)) < 0.65
-            filters.append(or_(fts_condition, Document.title.ilike(f"%{query}%"), semantic_condition))
+        if mode == "semantic":
+            # Ricerca SOLO vettoriale — nessun FTS
+            if query_emb:
+                semantic_condition = DocumentContent.embedding.cosine_distance(cast(query_emb, Vector)) < 0.70
+                filters.append(semantic_condition)
+            else:
+                # Fallback a titolo se embedding non disponibile
+                filters.append(Document.title.ilike(f"%{query}%"))
         else:
-            filters.append(or_(fts_condition, Document.title.ilike(f"%{query}%")))
+            # Modalità ibrida (default): FTS + vettoriale + titolo
+            fts_condition = and_(
+                DocumentContent.search_vector.isnot(None),
+                DocumentContent.search_vector.op("@@")(func.plainto_tsquery("italian", query)),
+            )
+
+            if query_emb:
+                semantic_condition = DocumentContent.embedding.cosine_distance(cast(query_emb, Vector)) < 0.65
+                filters.append(or_(fts_condition, Document.title.ilike(f"%{query}%"), semantic_condition))
+            else:
+                filters.append(or_(fts_condition, Document.title.ilike(f"%{query}%")))
+
 
     if tag:
         need_meta_join = True
@@ -574,16 +585,27 @@ async def search_documents(
     stmt = stmt.offset(offset).limit(limit)
 
     results = (await db.execute(stmt)).unique().all()
-    
+
+    # Bulk-fetch is_indexed status for returned docs
+    doc_ids_in_page = [row[0].id for row in results]
+    indexed_ids: set = set()
+    if doc_ids_in_page:
+        indexed_stmt = (
+            select(DocumentContent.document_id)
+            .where(
+                DocumentContent.document_id.in_(doc_ids_in_page),
+                DocumentContent.embedding.isnot(None),
+            )
+        )
+        indexed_rows = (await db.execute(indexed_stmt)).scalars().all()
+        indexed_ids = {row for row in indexed_rows}
+
     parsed_items = []
     for row in results:
         doc_obj = row[0]
-        
-        # Manually attach highlight snippet to the sqlalchemy model dict output
-        # to feed the pydantic model cleanly
         snippet = row.snippet if len(row) > 1 and row.snippet else None
         setattr(doc_obj, 'highlight_snippet', snippet)
-        
+        setattr(doc_obj, 'is_indexed', doc_obj.id in indexed_ids)
         parsed_items.append(DocumentResponse.model_validate(doc_obj))
 
     response = PaginatedDocuments(

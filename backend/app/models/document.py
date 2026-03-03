@@ -78,7 +78,7 @@ class DocumentContent(Base):
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), primary_key=True)
     fulltext_content = Column(String, nullable=True)
     search_vector = Column(TSVECTOR)
-    embedding = Column(Vector(768)) # Gemini text-embedding dimensions
+    embedding = Column(Vector(3072)) # gemini-embedding-001 returns 3072 dimensions
 
     document = relationship("Document", back_populates="content")
 

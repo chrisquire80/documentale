@@ -5,50 +5,65 @@ from ..core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Configura l'SDK solo se abilitato e con chiave presente
-if settings.GEMINI_ENABLED and settings.GEMINI_API_KEY:
-    genai.configure(api_key=settings.GEMINI_API_KEY)
-else:
-    genai = None
+
+def _get_configured_genai():
+    """Configura e restituisce il modulo genai, o None se non abilitato."""
+    if not settings.GEMINI_ENABLED or not settings.GEMINI_API_KEY:
+        return None
+    try:
+        import google.generativeai as _genai
+        _genai.configure(api_key=settings.GEMINI_API_KEY)
+        return _genai
+    except Exception as e:
+        logger.error(f"Errore configurazione Gemini SDK: {e}")
+        return None
+
 
 async def generate_embedding(text: str) -> Optional[List[float]]:
     """
     Genera il text-embedding vettoriale usando Gemini.
-    Model: text-embedding-004 (768 dimensions by default)
+    Model: gemini-embedding-001 (768 dimensions)
     """
-    if not genai or not text.strip():
+    if not text.strip():
+        return None
+    
+    sdk = _get_configured_genai()
+    if not sdk:
+        logger.warning("Gemini non configurato, embedding saltato.")
         return None
 
     try:
-        # truncate for embedding model limit ~2048 tokens / ~8000 chars roughly. Let's do 10000 limit.
         truncate_text = text[:10000]
-        
-        # Generazione dell'embedding
-        # Il task_type=RETRIEVAL_DOCUMENT ottimizza l'embedding per essere memorizzato nel DB
-        response = await genai.embed_content_async(
+        response = await sdk.embed_content_async(
             model='models/gemini-embedding-001',
             content=truncate_text,
             task_type="RETRIEVAL_DOCUMENT"
         )
         return response['embedding']
     except Exception as e:
-        logger.error(f"Errore durante la generazione dell'embedding con Gemini: {e}")
+        logger.error(f"Errore generazione embedding: {e}")
         return None
+
 
 async def generate_query_embedding(query: str) -> Optional[List[float]]:
     """
     Genera l'embedding vettoriale per la frase di ricerca dell'utente.
     """
-    if not genai or not query.strip():
+    if not query.strip():
+        return None
+    
+    sdk = _get_configured_genai()
+    if not sdk:
+        logger.warning("Gemini non configurato, query embedding saltato.")
         return None
 
     try:
-        response = await genai.embed_content_async(
+        response = await sdk.embed_content_async(
             model='models/gemini-embedding-001',
             content=query,
             task_type="RETRIEVAL_QUERY"
         )
         return response['embedding']
     except Exception as e:
-        logger.error(f"Errore generazione query embedding con Gemini: {e}")
+        logger.error(f"Errore generazione query embedding: {e}")
         return None

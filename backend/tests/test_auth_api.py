@@ -40,8 +40,8 @@ class TestLogoutBehavior:
 
         # Il TTL dovrebbe essere positivo (il token non è ancora scaduto)
         assert remaining_ttl > 0, "Il token non dovrebbe essere già scaduto"
-        # Il TTL dovrebbe essere meno di 30 minuti (il default di ACCESS_TOKEN_EXPIRE_MINUTES)
-        assert remaining_ttl <= (30 * 60), "Il TTL dovrebbe essere il default"
+        # Il TTL dovrebbe essere inferiore o uguale al valore di ACCESS_TOKEN_EXPIRE_MINUTES
+        assert remaining_ttl <= settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60, "Il TTL dovrebbe rispettare la configurazione"
 
     def test_token_expiration_extraction(self):
         """Verifica che l'exp possa essere estratto dal token per il logout."""
@@ -161,8 +161,9 @@ class TestTokenExpiration:
         now = datetime.utcnow().timestamp()
         time_to_expire = exp - now
 
-        # Dovrebbe scadere tra ~30 minuti (con tolleranza di 1 minuto)
-        assert 29 * 60 < time_to_expire < 31 * 60
+        # Dovrebbe scadere intorno a ACCESS_TOKEN_EXPIRE_MINUTES (con tolleranza di 1 minuto)
+        expected_seconds = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        assert (expected_seconds - 60) < time_to_expire < (expected_seconds + 60)
 
     def test_refresh_token_expires_later(self):
         """Il refresh token scade dopo l'access token."""

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, AlertCircle } from 'lucide-react';
+import { X, Save, AlertCircle, Sparkles, Loader2 } from 'lucide-react';
 
 interface EditMetadataModalProps {
     isOpen: boolean;
@@ -19,6 +19,7 @@ const EditMetadataModal: React.FC<EditMetadataModalProps> = ({ isOpen, onClose, 
 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [aiTagLoading, setAiTagLoading] = useState(false);
 
     // Initialize state with current document data when modal opens
     useEffect(() => {
@@ -147,15 +148,53 @@ const EditMetadataModal: React.FC<EditMetadataModalProps> = ({ isOpen, onClose, 
 
                     <div>
                         <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>Tags (separati da virgola)</label>
-                        <input
-                            type="text"
-                            className="input"
-                            name="docTags"
-                            value={tagsInput}
-                            onChange={e => setTagsInput(e.target.value)}
-                            placeholder="es. contratto, fattura, urgente"
-                        />
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <input
+                                type="text"
+                                className="input"
+                                name="docTags"
+                                value={tagsInput}
+                                onChange={e => setTagsInput(e.target.value)}
+                                placeholder="es. contratto, fattura, urgente"
+                                style={{ flex: 1 }}
+                            />
+                            <button
+                                type="button"
+                                className="btn btn-ai-suggest"
+                                title="Suggerisci tag con AI"
+                                disabled={loading || aiTagLoading}
+                                onClick={async () => {
+                                    setAiTagLoading(true);
+                                    try {
+                                        const token = localStorage.getItem('token');
+                                        const res = await fetch(`${BASE_URL}/ai/extract/${doc.id}`, {
+                                            method: 'POST',
+                                            headers: { Authorization: `Bearer ${token}` },
+                                        });
+                                        if (!res.ok) throw new Error('AI non disponibile');
+                                        const data = await res.json();
+                                        const entities: string[] = data.extracted_entities?.map((e: any) => e.text).filter(Boolean) || [];
+                                        const ai_tags: string[] = data.parties?.map((p: any) => p.text || p).filter(Boolean) || [];
+                                        const combined = [...new Set([...entities, ...ai_tags])].slice(0, 8);
+                                        if (combined.length > 0) {
+                                            setTagsInput(prev => {
+                                                const existing = prev.split(',').map(t => t.trim()).filter(Boolean);
+                                                const merged = [...new Set([...existing, ...combined])];
+                                                return merged.join(', ');
+                                            });
+                                        }
+                                    } catch {
+                                        setError('Impossibile ottenere suggerimenti AI per i tag.');
+                                    } finally {
+                                        setAiTagLoading(false);
+                                    }
+                                }}
+                            >
+                                {aiTagLoading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Sparkles size={14} />}
+                            </button>
+                        </div>
                     </div>
+
 
                     <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem', cursor: 'pointer' }}>
                         <input

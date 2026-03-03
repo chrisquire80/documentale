@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { useAuth } from '../store/AuthContext';
-import { Search, LogOut, Upload as UploadIcon, FileText, BarChart2, Trash2, Database, Shield, Bot } from 'lucide-react';
+import { Search, LogOut, Upload as UploadIcon, FileText, BarChart2, Trash2, Database, Shield, Bot, LayoutGrid, LayoutList, Sparkles } from 'lucide-react';
 import DocumentCard from '../components/DocumentCard';
 import { ChatAssistant } from '../components/ChatAssistant';
+import FocusView from '../components/FocusView';
 import SkeletonCard from '../components/SkeletonCard';
 import Pagination from '../components/Pagination';
 import UploadModal from '../components/UploadModal';
@@ -14,6 +15,7 @@ import DashboardStatsModal from '../components/DashboardStatsModal';
 import SidebarFilters from '../components/SidebarFilters';
 import type { FilterState } from '../components/SidebarFilters';
 import BulkActionBar from '../components/BulkActionBar';
+import DocumentRow from '../components/DocumentRow';
 
 const ITEMS_PER_PAGE = 20;
 const SKELETON_COUNT = 6;
@@ -26,6 +28,7 @@ interface PaginatedDocuments {
 }
 
 const DashboardPage: React.FC = () => {
+    const queryClient = useQueryClient();
 
     const [inputValue, setInputValue] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -35,17 +38,31 @@ const DashboardPage: React.FC = () => {
         date_from: null,
         date_to: null,
         author: null,
-        department: null
+        department: null,
+        ai_status: 'all'
     });
     const [currentPage, setCurrentPage] = useState(1);
     const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
+    const [searchMode, setSearchMode] = useState<'hybrid' | 'semantic'>('hybrid');
 
     const [isUploadOpen, setIsUploadOpen] = useState(false);
     const [isBulkOpen, setIsBulkOpen] = useState(false);
     const [isStatsOpen, setIsStatsOpen] = useState(false);
     const [isDocStatsOpen, setIsDocStatsOpen] = useState(false);
-    const [isChatOpen, setIsChatOpen] = useState(false);
+    const [chatDoc, setChatDoc] = useState<any>(null);
+    const [chatDocked, setChatDocked] = useState(false);
+    const [focusDoc, setFocusDoc] = useState<any>(null);
     const { currentUser, logout } = useAuth();
+
+    // Vista griglia o lista
+    const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
+        return (localStorage.getItem('docViewMode') as 'grid' | 'list') || 'grid';
+    });
+
+    const handleViewMode = (mode: 'grid' | 'list') => {
+        setViewMode(mode);
+        localStorage.setItem('docViewMode', mode);
+    };
 
     // Debounce
     useEffect(() => {
@@ -56,12 +73,12 @@ const DashboardPage: React.FC = () => {
     // Reset to page 1 whenever the search term or filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [debouncedQuery, filters]);
+    }, [debouncedQuery, filters, searchMode]);
 
     const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
     const { data, isLoading, refetch } = useQuery<PaginatedDocuments>({
-        queryKey: ['documents', debouncedQuery, filters, currentPage],
+        queryKey: ['documents', debouncedQuery, filters, currentPage, searchMode],
         queryFn: async () => {
             const params = new URLSearchParams({
                 limit: String(ITEMS_PER_PAGE),
@@ -74,6 +91,7 @@ const DashboardPage: React.FC = () => {
             if (filters.date_to) params.append('date_to', filters.date_to);
             if (filters.author) params.append('author', filters.author);
             if (filters.department) params.append('department', filters.department);
+            if (searchMode === 'semantic') params.append('mode', 'semantic');
 
             const response = await api.get(`/documents/search?${params}`);
             return response.data;
@@ -88,6 +106,14 @@ const DashboardPage: React.FC = () => {
 
     const total = data?.total ?? 0;
     const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
+
+    // Client-side AI status filtering
+    const filteredDocuments = React.useMemo(() => {
+        if (filters.ai_status === 'all') return documents;
+        return documents.filter((doc: any) =>
+            filters.ai_status === 'ready' ? doc.is_indexed === true : doc.is_indexed !== true
+        );
+    }, [documents, filters.ai_status]);
 
     // Estrai tag, autori e dipartimenti univoci dai documenti
     const { availableTags, availableAuthors, availableDepartments } = React.useMemo(() => {
@@ -134,6 +160,15 @@ const DashboardPage: React.FC = () => {
         refetch();
     }, [refetch]);
 
+    // ── Focus Mode ──
+    if (focusDoc) {
+        return (
+            <div>
+                <FocusView doc={focusDoc} onClose={() => setFocusDoc(null)} />
+            </div>
+        );
+    }
+
     return (
         <div>
             {/* ── Navbar ── */}
@@ -144,8 +179,7 @@ const DashboardPage: React.FC = () => {
                 </div>
                 <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
                     <button
-                        className="btn"
-                        style={{ width: 'auto', background: 'transparent', border: '1px solid var(--error)', color: 'var(--error)' }}
+                        className="btn btn-trash"
                         onClick={() => window.location.href = '/trash'}
                         title="Cestino"
                     >
@@ -203,7 +237,7 @@ const DashboardPage: React.FC = () => {
             </nav>
 
             <main className="container">
-                <div className="dashboard-layout">
+                <div className={`dashboard-layout${chatDocked && !!chatDoc ? ' docked' : ''}`}>
                     {/* Sidebar Filtri */}
                     <SidebarFilters
                         availableTags={availableTags}
@@ -211,46 +245,97 @@ const DashboardPage: React.FC = () => {
                         availableDepartments={availableDepartments}
                         filters={filters}
                         onChange={setFilters}
+                        onTagAssigned={() => queryClient.invalidateQueries({ queryKey: ['documents'] })}
                     />
 
                     {/* Contenuto Principale */}
                     <div className="main-content">
-                        <div style={{ position: 'relative', marginBottom: '2rem' }}>
-                            <Search style={{ position: 'absolute', left: '1rem', top: '1rem', color: 'var(--text-muted)' }} size={20} />
-                            <input
-                                className="input"
-                                style={{ paddingLeft: '3rem', marginBottom: 0 }}
-                                placeholder="Cerca documenti per titolo, tag o contenuto…"
-                                value={inputValue}
-                                onChange={handleSearchChange}
-                            />
+                        {/* Search bar + semantic toggle */}
+                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                            <div style={{ position: 'relative', flex: 1 }}>
+                                <Search style={{ position: 'absolute', left: '1rem', top: '1rem', color: 'var(--text-muted)' }} size={20} />
+                                <input
+                                    className="input"
+                                    style={{ paddingLeft: '3rem', marginBottom: 0 }}
+                                    placeholder={searchMode === 'semantic' ? 'Ricerca semantica AI…' : 'Cerca documenti per titolo, tag o contenuto…'}
+                                    value={inputValue}
+                                    onChange={handleSearchChange}
+                                />
+                            </div>
+                            <button
+                                className={`search-mode-toggle${searchMode === 'semantic' ? ' active' : ''}`}
+                                onClick={() => setSearchMode(m => m === 'hybrid' ? 'semantic' : 'hybrid')}
+                                title={searchMode === 'semantic' ? 'Modalità: Ricerca Semantica AI' : 'Modalità: Ricerca Ibrida (testo + AI)'}
+                            >
+                                <Sparkles size={16} />
+                                <span>{searchMode === 'semantic' ? 'AI' : 'Ibrida'}</span>
+                            </button>
+                        </div>
+
+                        {/* Toolbar: count + view toggle */}
+                        <div className="view-toolbar">
+                            <p className="doc-count">{total} document{total !== 1 ? 'i' : 'o'}</p>
+                            <div className="view-toggle">
+                                <button
+                                    className={`view-toggle-btn${viewMode === 'grid' ? ' active' : ''}`}
+                                    onClick={() => handleViewMode('grid')}
+                                    title="Vista Griglia"
+                                ><LayoutGrid size={17} /></button>
+                                <button
+                                    className={`view-toggle-btn${viewMode === 'list' ? ' active' : ''}`}
+                                    onClick={() => handleViewMode('list')}
+                                    title="Vista Lista"
+                                ><LayoutList size={17} /></button>
+                            </div>
                         </div>
 
                         {isLoading ? (
-                            <div className="doc-grid" style={{ marginTop: '1rem' }}>
+                            <div className="doc-grid">
                                 {Array.from({ length: SKELETON_COUNT }).map((_, i) => (
                                     <SkeletonCard key={i} />
                                 ))}
                             </div>
                         ) : (
                             <>
-                                {/* key forces CSS page-enter animation on page/query change */}
-                                <div className="doc-grid" key={`${currentPage}-${debouncedQuery}-${filters.tag}`} style={{ marginTop: '1rem' }}>
-                                    {documents.map((doc: any) => (
-                                        <DocumentCard
-                                            key={doc.id}
-                                            doc={doc}
-                                            onUpdate={refetch}
-                                            isSelected={selectedDocs.includes(doc.id)}
-                                            onToggleSelect={toggleDocSelection}
-                                        />
-                                    ))}
-                                    {documents.length === 0 && (
-                                        <div style={{ textAlign: 'center', gridColumn: '1/-1', color: 'var(--text-muted)', marginTop: '4rem' }}>
-                                            Nessun documento trovato.
-                                        </div>
-                                    )}
-                                </div>
+                                {viewMode === 'grid' ? (
+                                    <div className="doc-grid" key={`${currentPage}-${debouncedQuery}-${filters.tag}`}>
+                                        {filteredDocuments.map((doc: any) => (
+                                            <DocumentCard
+                                                key={doc.id}
+                                                doc={doc}
+                                                onUpdate={refetch}
+                                                isSelected={selectedDocs.includes(doc.id)}
+                                                onToggleSelect={toggleDocSelection}
+                                                onChatOpen={setChatDoc}
+                                                onPreview={setFocusDoc}
+                                            />
+                                        ))}
+                                        {documents.length === 0 && (
+                                            <div style={{ textAlign: 'center', gridColumn: '1/-1', color: 'var(--text-muted)', marginTop: '4rem' }}>
+                                                Nessun documento trovato.
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="doc-list" key={`${currentPage}-${debouncedQuery}-${filters.tag}`}>
+                                        {filteredDocuments.map((doc: any) => (
+                                            <DocumentRow
+                                                key={doc.id}
+                                                doc={doc}
+                                                onUpdate={refetch}
+                                                isSelected={selectedDocs.includes(doc.id)}
+                                                onToggleSelect={toggleDocSelection}
+                                                onChatOpen={setChatDoc}
+                                                onPreview={setFocusDoc}
+                                            />
+                                        ))}
+                                        {documents.length === 0 && (
+                                            <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '4rem' }}>
+                                                Nessun documento trovato.
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
 
                                 <Pagination
                                     currentPage={currentPage}
@@ -261,9 +346,11 @@ const DashboardPage: React.FC = () => {
                             </>
                         )}
                     </div>
+
                 </div>
             </main>
 
+            {/* Modals */}
             <BulkActionBar
                 selectedIds={selectedDocs}
                 onClearSelection={() => setSelectedDocs([])}
@@ -283,35 +370,26 @@ const DashboardPage: React.FC = () => {
                 <DashboardStatsModal onClose={() => setIsDocStatsOpen(false)} />
             )}
 
-            {/* Pulsante Chat Globale RAG */}
+            {/* Global FAB for general AI chat */}
             <button
-                onClick={() => setIsChatOpen(true)}
-                style={{
-                    position: 'fixed',
-                    bottom: '2rem',
-                    right: '2rem',
-                    width: '56px',
-                    height: '56px',
-                    borderRadius: '50%',
-                    backgroundColor: 'var(--blue-600, #2563eb)',
-                    color: 'white',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: 'pointer',
-                    zIndex: 40,
-                    border: 'none',
-                    transition: 'transform 0.2s',
-                    boxShadow: '0 10px 25px -5px rgba(37, 99, 235, 0.4)'
-                }}
-                onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.1)'}
-                onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                className="chat-fab"
+                onClick={() => setChatDoc({ id: undefined, title: 'Generale' })}
+                onMouseOver={(e) => (e.currentTarget.style.transform = 'scale(1.1)')}
+                onMouseOut={(e) => (e.currentTarget.style.transform = 'scale(1)')}
                 title="Google Gemini Assistant"
             >
                 <Bot size={28} />
             </button>
 
-            <ChatAssistant isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
+            <ChatAssistant
+                isOpen={!!chatDoc}
+                onClose={() => setChatDoc(null)}
+                documentId={chatDoc?.id}
+                documentTitle={chatDoc?.title}
+                docked={chatDocked}
+                onToggleDock={() => setChatDocked(d => !d)}
+                onOpenDocument={(docId, docTitle) => setChatDoc({ id: docId, title: docTitle })}
+            />
         </div>
     );
 };

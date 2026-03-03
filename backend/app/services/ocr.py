@@ -67,9 +67,9 @@ async def _extract_pdf(path: str) -> str:
         import pdfplumber  # lazy import: non tutti i deploy lo hanno
 
         with pdfplumber.open(path) as pdf:
-            pages_text = [page.extract_text() or "" for page in pdf.pages]
+            pages_text = [f"[[PAGE:{i+1}]]\n{page.extract_text() or ''}" for i, page in enumerate(pdf.pages)]
 
-        return " ".join(filter(None, pages_text)).strip()
+        return "\n\n".join(filter(None, pages_text)).strip()
 
     text = await asyncio.get_event_loop().run_in_executor(None, _sync)
 
@@ -92,8 +92,8 @@ async def _ocr_pdf_pages(path: str) -> str:
             import pytesseract
 
             pages = convert_from_path(path, dpi=200)
-            texts = [pytesseract.image_to_string(p, lang="ita") for p in pages]
-            return " ".join(filter(None, texts)).strip()
+            texts = [f"[[PAGE:{i+1}]]\n{pytesseract.image_to_string(p, lang='ita')}" for i, p in enumerate(pages)]
+            return "\n\n".join(filter(None, texts)).strip()
         except ImportError:
             # pdf2image non installato: skip silenziosamente
             return ""

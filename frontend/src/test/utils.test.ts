@@ -151,6 +151,3 @@ describe('Utility Functions', () => {
     });
   });
 });
-
-// Add this import at the top if not already present
-import { vi } from 'vitest';

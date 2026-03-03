@@ -1,6 +1,7 @@
 import React from 'react';
-import { Download, X, Trash2 } from 'lucide-react';
+import { Download, X, Trash2, GitCompareArrows } from 'lucide-react';
 import api from '../services/api';
+import CompareModal from './CompareModal';
 
 interface BulkActionBarProps {
     selectedIds: string[];
@@ -10,6 +11,7 @@ interface BulkActionBarProps {
 
 const BulkActionBar: React.FC<BulkActionBarProps> = ({ selectedIds, onClearSelection, onSuccess }) => {
     const [isExporting, setIsExporting] = React.useState(false);
+    const [showCompare, setShowCompare] = React.useState(false);
 
     if (selectedIds.length === 0) return null;
 
@@ -42,115 +44,153 @@ const BulkActionBar: React.FC<BulkActionBarProps> = ({ selectedIds, onClearSelec
     };
 
     return (
-        <div style={{
-            position: 'fixed',
-            bottom: '2rem',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            backgroundColor: 'var(--bg-card)',
-            border: '1px solid var(--accent)',
-            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5)',
-            borderRadius: '999px',
-            padding: '0.75rem 1.5rem',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '1.5rem',
-            zIndex: 1000,
-            animation: 'pageEnter 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-        }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
-                <span style={{
-                    backgroundColor: 'var(--accent)',
-                    color: 'var(--bg-dark)',
-                    width: '24px', height: '24px',
-                    borderRadius: '50%',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: '0.9rem'
-                }}>
-                    {selectedIds.length}
-                </span>
-                <span>selezionati</span>
-            </div>
-
-            <div style={{ width: '1px', height: '24px', backgroundColor: 'var(--glass)' }} />
-
-            <div style={{ display: 'flex', gap: '0.75rem' }}>
-                <button
-                    onClick={onClearSelection}
-                    disabled={isExporting}
-                    style={{
-                        display: 'flex', alignItems: 'center', gap: '0.4rem',
-                        background: 'transparent',
-                        color: 'var(--text-muted)',
-                        border: 'none',
-                        cursor: isExporting ? 'not-allowed' : 'pointer',
-                        fontWeight: 500,
-                        padding: '0.5rem 0.75rem',
-                        borderRadius: '0.375rem',
-                    }}
-                >
-                    <X size={16} /> Annulla
-                </button>
-
-                <button
-                    onClick={handleExport}
-                    disabled={isExporting}
-                    style={{
-                        display: 'flex', alignItems: 'center', gap: '0.4rem',
-                        background: 'var(--accent)',
+        <>
+            <div style={{
+                position: 'fixed',
+                bottom: '2rem',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--accent)',
+                boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5)',
+                borderRadius: '999px',
+                padding: '0.75rem 1.5rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '1.5rem',
+                zIndex: 1000,
+                animation: 'pageEnter 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+            }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
+                    <span style={{
+                        backgroundColor: 'var(--accent)',
                         color: 'var(--bg-dark)',
-                        border: 'none',
-                        cursor: isExporting ? 'not-allowed' : 'pointer',
-                        fontWeight: 600,
-                        padding: '0.5rem 1rem',
-                        borderRadius: '0.375rem',
-                        transition: 'opacity 0.2s',
-                        opacity: isExporting ? 0.7 : 1
-                    }}
-                >
-                    <Download size={16} />
-                    {isExporting ? 'Esportazione...' : 'Esporta ZIP'}
-                </button>
+                        width: '24px', height: '24px',
+                        borderRadius: '50%',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '0.9rem'
+                    }}>
+                        {selectedIds.length}
+                    </span>
+                    <span>selezionati</span>
+                </div>
 
-                <button
-                    onClick={async () => {
-                        if (window.confirm(`Sei sicuro di voler spostare ${selectedIds.length} documenti nel cestino?`)) {
-                            try {
-                                await api.post('/documents/bulk-delete', { document_ids: selectedIds });
-                                onClearSelection();
-                                if (onSuccess) onSuccess();
-                            } catch (err) {
-                                console.error('Bulk delete failed:', err);
-                                alert('Errore durante l\'eliminazione massiva.');
+                <div style={{ width: '1px', height: '24px', backgroundColor: 'var(--glass)' }} />
+
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <button
+                        onClick={onClearSelection}
+                        disabled={isExporting}
+                        style={{
+                            display: 'flex', alignItems: 'center', gap: '0.4rem',
+                            background: 'transparent',
+                            color: 'var(--text-muted)',
+                            border: 'none',
+                            cursor: isExporting ? 'not-allowed' : 'pointer',
+                            fontWeight: 500,
+                            padding: '0.5rem 0.75rem',
+                            borderRadius: '0.375rem',
+                        }}
+                    >
+                        <X size={16} /> Annulla
+                    </button>
+
+                    {/* Confronta AI — appare solo con ≥2 selezionati */}
+                    {selectedIds.length >= 2 && (
+                        <button
+                            onClick={() => setShowCompare(true)}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                                background: 'rgba(139, 92, 246, 0.15)',
+                                color: '#a78bfa',
+                                border: '1px solid rgba(139, 92, 246, 0.35)',
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                                padding: '0.5rem 1rem',
+                                borderRadius: '0.375rem',
+                                transition: 'all 0.2s',
+                            }}
+                            onMouseOver={(e) => {
+                                e.currentTarget.style.background = 'rgba(139, 92, 246, 0.3)';
+                                e.currentTarget.style.borderColor = '#a78bfa';
+                            }}
+                            onMouseOut={(e) => {
+                                e.currentTarget.style.background = 'rgba(139, 92, 246, 0.15)';
+                                e.currentTarget.style.borderColor = 'rgba(139, 92, 246, 0.35)';
+                            }}
+                        >
+                            <GitCompareArrows size={16} />
+                            Confronta AI
+                        </button>
+                    )}
+
+                    <button
+                        onClick={handleExport}
+                        disabled={isExporting}
+                        style={{
+                            display: 'flex', alignItems: 'center', gap: '0.4rem',
+                            background: 'var(--accent)',
+                            color: 'var(--bg-dark)',
+                            border: 'none',
+                            cursor: isExporting ? 'not-allowed' : 'pointer',
+                            fontWeight: 600,
+                            padding: '0.5rem 1rem',
+                            borderRadius: '0.375rem',
+                            transition: 'opacity 0.2s',
+                            opacity: isExporting ? 0.7 : 1
+                        }}
+                    >
+                        <Download size={16} />
+                        {isExporting ? 'Esportazione...' : 'Esporta ZIP'}
+                    </button>
+
+                    <button
+                        onClick={async () => {
+                            if (window.confirm(`Sei sicuro di voler spostare ${selectedIds.length} documenti nel cestino?`)) {
+                                try {
+                                    await api.post('/documents/bulk-delete', { document_ids: selectedIds });
+                                    onClearSelection();
+                                    if (onSuccess) onSuccess();
+                                } catch (err) {
+                                    console.error('Bulk delete failed:', err);
+                                    alert('Errore durante l\'eliminazione massiva.');
+                                }
                             }
-                        }
-                    }}
-                    style={{
-                        display: 'flex', alignItems: 'center', gap: '0.4rem',
-                        background: 'transparent',
-                        color: 'var(--error)',
-                        border: '1px solid var(--error)',
-                        cursor: 'pointer',
-                        fontWeight: 600,
-                        padding: '0.5rem 1rem',
-                        borderRadius: '0.375rem',
-                        transition: 'all 0.2s',
-                    }}
-                    onMouseOver={(e) => {
-                        e.currentTarget.style.background = 'var(--error)';
-                        e.currentTarget.style.color = 'var(--bg-dark)';
-                    }}
-                    onMouseOut={(e) => {
-                        e.currentTarget.style.background = 'transparent';
-                        e.currentTarget.style.color = 'var(--error)';
-                    }}
-                >
-                    <Trash2 size={16} />
-                    Elimina
-                </button>
+                        }}
+                        style={{
+                            display: 'flex', alignItems: 'center', gap: '0.4rem',
+                            background: 'transparent',
+                            color: 'var(--error)',
+                            border: '1px solid var(--error)',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            padding: '0.5rem 1rem',
+                            borderRadius: '0.375rem',
+                            transition: 'all 0.2s',
+                        }}
+                        onMouseOver={(e) => {
+                            e.currentTarget.style.background = 'var(--error)';
+                            e.currentTarget.style.color = 'var(--bg-dark)';
+                        }}
+                        onMouseOut={(e) => {
+                            e.currentTarget.style.background = 'transparent';
+                            e.currentTarget.style.color = 'var(--error)';
+                        }}
+                    >
+                        <Trash2 size={16} />
+                        Elimina
+                    </button>
+                </div>
             </div>
-        </div>
+
+            <CompareModal
+                isOpen={showCompare}
+                onClose={() => setShowCompare(false)}
+                documentIds={selectedIds}
+            />
+        </>
     );
 };
 
 export default BulkActionBar;
+

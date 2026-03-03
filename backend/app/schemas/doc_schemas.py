@@ -65,6 +65,8 @@ class DocumentResponse(DocumentBase):
     is_deleted: bool = False
     created_at: datetime
     deleted_at: Optional[datetime] = None
+    highlight_snippet: Optional[str] = None
+    is_indexed: bool = False  # True se l'embedding AI è già stato generato
 
     class Config:
         from_attributes = True

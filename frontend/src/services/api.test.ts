@@ -1,9 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import axios from 'axios';
 import api from './api';
-
-vi.mock('axios');
-const mockedAxios = axios as any;
 
 describe('API Service', () => {
   beforeEach(() => {
@@ -26,8 +22,10 @@ describe('API Service', () => {
     const mockToken = 'test-token-123';
     vi.mocked(localStorage.getItem).mockReturnValue(mockToken);
 
-    const config = { headers: {} };
-    const result = api.interceptors.request.handlers[0].fulfilled(config);
+    const config = { headers: {} as any };
+    const handler = (api.interceptors.request as any).handlers[0]?.fulfilled;
+    if (!handler) throw new Error('Request interceptor not found');
+    const result = handler(config);
 
     expect(result.headers.Authorization).toBe(`Bearer ${mockToken}`);
   });
@@ -35,8 +33,10 @@ describe('API Service', () => {
   it('should not add authorization header when token is missing', async () => {
     vi.mocked(localStorage.getItem).mockReturnValue(null);
 
-    const config = { headers: {} };
-    const result = api.interceptors.request.handlers[0].fulfilled(config);
+    const config = { headers: {} as any };
+    const handler = (api.interceptors.request as any).handlers[0]?.fulfilled;
+    if (!handler) throw new Error('Request interceptor not found');
+    const result = handler(config);
 
     expect(result.headers.Authorization).toBeUndefined();
   });
@@ -51,19 +51,9 @@ describe('API Service', () => {
       return null;
     });
 
-    const originalError = {
-      response: { status: 401 },
-      config: { _retry: false, headers: {} },
-    };
 
-    mockedAxios.post.mockResolvedValueOnce({
-      data: {
-        access_token: mockNewAccessToken,
-        refresh_token: mockNewRefreshToken,
-      },
-    });
 
-    const handler = api.interceptors.response.handlers[0].rejected;
+    const handler = (api.interceptors.response as any).handlers[0]?.rejected;
     // This test is simplified - real implementation would be more complex
     expect(handler).toBeDefined();
   });
@@ -71,28 +61,29 @@ describe('API Service', () => {
   it('should redirect to login on 401 without refresh token', async () => {
     vi.mocked(localStorage.getItem).mockReturnValue(null);
 
-    const originalError = {
-      response: { status: 401 },
-      config: { _retry: false, headers: {} },
-    };
 
-    const handler = api.interceptors.response.handlers[0].rejected;
+
+    const handler = (api.interceptors.response as any).handlers[0]?.rejected;
     expect(handler).toBeDefined();
   });
 
   it('should handle response errors properly', async () => {
-    const originalError = {
-      response: { status: 500 },
-      config: { _retry: false },
-    };
 
-    const handler = api.interceptors.response.handlers[0].rejected;
+
+    const handler = (api.interceptors.response as any).handlers[0]?.rejected;
     expect(handler).toBeDefined();
   });
 
   it('should pass through successful responses', async () => {
-    const response = { data: { test: 'data' }, status: 200 };
-    const handler = api.interceptors.response.handlers[0].fulfilled;
+    const response = {
+      data: { test: 'data' },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config: {} as any
+    };
+    const handler = (api.interceptors.response as any).handlers[0]?.fulfilled;
+    if (!handler) throw new Error('Response interceptor not found');
     const result = handler(response);
 
     expect(result).toEqual(response);

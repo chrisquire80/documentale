@@ -1,5 +1,5 @@
-import React from 'react';
-import { Filter, X, Calendar, User, Building2, FileType } from 'lucide-react';
+import React, { useState } from 'react';
+import { Filter, X, Calendar, User, Building2, FileType, Sparkles } from 'lucide-react';
 
 export interface FilterState {
     tag: string | null;
@@ -8,6 +8,7 @@ export interface FilterState {
     date_to: string | null;
     author: string | null;
     department: string | null;
+    ai_status: 'all' | 'ready' | 'pending';
 }
 
 interface SidebarFiltersProps {
@@ -16,6 +17,7 @@ interface SidebarFiltersProps {
     availableDepartments: string[];
     filters: FilterState;
     onChange: (newFilters: FilterState) => void;
+    onTagAssigned?: () => void;
 }
 
 const FILE_TYPES = [
@@ -27,13 +29,17 @@ const FILE_TYPES = [
     { label: 'PNG', value: 'image/png' },
 ];
 
+const BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:8000';
+
 const SidebarFilters: React.FC<SidebarFiltersProps> = ({
     availableTags,
     availableAuthors,
     availableDepartments,
     filters,
-    onChange
+    onChange,
+    onTagAssigned,
 }) => {
+    const [dragOverTag, setDragOverTag] = useState<string | null>(null);
 
     const countActiveFilters = () => {
         let count = 0;
@@ -55,12 +61,38 @@ const SidebarFilters: React.FC<SidebarFiltersProps> = ({
             date_from: null,
             date_to: null,
             author: null,
-            department: null
+            department: null,
+            ai_status: 'all'
         });
     };
 
+    const handleTagDrop = async (tag: string, e: React.DragEvent) => {
+        e.preventDefault();
+        setDragOverTag(null);
+        const docId = e.dataTransfer.getData('application/x-doc-id');
+        if (!docId) return;
+
+        try {
+            const token = localStorage.getItem('token');
+            // PATCH the doc to add the tag
+            await fetch(`${BASE_URL}/documents/${docId}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    doc_metadata: { tags: [tag] },
+                }),
+            });
+            onTagAssigned?.();
+        } catch (err) {
+            console.error('Tag assignment failed:', err);
+        }
+    };
+
     return (
-        <aside className="sidebar-filters" style={{ width: '280px', flexShrink: 0 }}>
+        <aside className="sidebar-filters">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <Filter size={20} color="var(--accent)" />
@@ -86,10 +118,13 @@ const SidebarFilters: React.FC<SidebarFiltersProps> = ({
                 )}
             </div>
 
-            {/* Tag */}
+            {/* Tag — drop targets */}
             <div className="filter-group" style={{ marginBottom: '1.5rem' }}>
                 <h4 style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                     Tag
+                    <span style={{ fontSize: '0.65rem', opacity: 0.6, fontWeight: 400, textTransform: 'none' }}>
+                        (trascina un documento qui)
+                    </span>
                 </h4>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '150px', overflowY: 'auto' }}>
@@ -97,7 +132,14 @@ const SidebarFilters: React.FC<SidebarFiltersProps> = ({
                         <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Nessun tag</span>
                     ) : (
                         availableTags.map(tag => (
-                            <label key={tag} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.95rem' }}>
+                            <label
+                                key={tag}
+                                className={`tag-drop-target${dragOverTag === tag ? ' tag-drop-active' : ''}`}
+                                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.95rem' }}
+                                onDragOver={(e) => { e.preventDefault(); setDragOverTag(tag); }}
+                                onDragLeave={() => setDragOverTag(null)}
+                                onDrop={(e) => handleTagDrop(tag, e)}
+                            >
                                 <input
                                     type="radio"
                                     name="filter_tag"
@@ -109,6 +151,31 @@ const SidebarFilters: React.FC<SidebarFiltersProps> = ({
                             </label>
                         ))
                     )}
+                </div>
+            </div>
+
+            {/* Stato AI */}
+            <div className="filter-group" style={{ marginBottom: '1.5rem' }}>
+                <h4 style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <Sparkles size={14} /> Stato AI
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {[
+                        { label: 'Tutti', value: 'all' as const },
+                        { label: '✅ AI Pronto', value: 'ready' as const },
+                        { label: '⏳ In elaborazione', value: 'pending' as const },
+                    ].map(opt => (
+                        <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.95rem' }}>
+                            <input
+                                type="radio"
+                                name="filter_ai_status"
+                                checked={filters.ai_status === opt.value}
+                                onChange={() => onChange({ ...filters, ai_status: opt.value })}
+                                style={{ accentColor: 'var(--accent)', width: '1rem', height: '1rem' }}
+                            />
+                            {opt.label}
+                        </label>
+                    ))}
                 </div>
             </div>
 

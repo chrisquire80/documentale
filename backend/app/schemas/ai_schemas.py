@@ -10,6 +10,7 @@ class ChatSource(BaseModel):
     document_id: str
     title: str
     snippet: str
+    page_number: Optional[int] = None
 
 class ChatResponse(BaseModel):
     answer: str
@@ -36,3 +37,24 @@ class ExtractEntitiesResponse(BaseModel):
     amounts: List[dict] = []
     references: List[str] = []
     extracted_entities: List[dict] = []
+
+
+class SuggestionsRequest(BaseModel):
+    document_id: Optional[UUID] = None
+    document_title: Optional[str] = None
+
+class SuggestionsResponse(BaseModel):
+    suggestions: List[str]
+
+
+class CompareRequest(BaseModel):
+    doc_ids: List[UUID] = Field(..., min_length=2, max_length=10, description="IDs dei documenti da confrontare")
+
+class CompareDocSummary(BaseModel):
+    document_id: str
+    title: str
+    summary: str
+
+class CompareResponse(BaseModel):
+    comparison: str = Field(..., description="Analisi comparativa in formato Markdown")
+    summaries: List[CompareDocSummary] = []
