@@ -36,3 +36,10 @@ Thumbs.db
 
 # Claude memory system — runtime data lives in ~/.documentale-mem/
 # (nothing to ignore inside the project for the memory system)
+# Test reports
+coverage/
+frontend/coverage/
+playwright-report/
+frontend/playwright-report/
+test-results/
+frontend/test-results/

@@ -117,12 +117,12 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(({ url, zoom, onTe
             textLayerRef.current.style.height = `${viewport.height}px`;
             textLayerRef.current.style.width = `${viewport.width}px`;
 
-            await (pdfjsLib as any).renderTextLayer({
+            const textLayer = new pdfjsLib.TextLayer({
                 textContentSource: textContent,
                 container: textLayerRef.current,
                 viewport: viewport,
-                enhanceTextSelection: true,
-            }).promise;
+            });
+            await textLayer.render();
 
         } catch (err: any) {
             if (err?.name !== 'RenderingCancelledException') {
