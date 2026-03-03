@@ -219,7 +219,7 @@ jobs:
           echo '![Coverage Badge](https://codecov.io/gh/chrisquire80/documentale/branch/main/graph/badge.svg)'
 
       - name: Upload Badge
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-badge
           path: .github/badges/
