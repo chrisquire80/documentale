@@ -15,6 +15,7 @@ class ChatSource(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     sources: List[ChatSource] = []
+    reasoning_steps: List[str] = []
 
 
 class ExtractedEntity(BaseModel):

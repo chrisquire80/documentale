@@ -9,13 +9,37 @@ interface PdfViewerProps {
     url: string;
     zoom: number;
     onTextSelect?: (text: string) => void;
+    /** Testo da evidenziare dopo il rendering della pagina (es. snippet da citazione chat) */
+    highlightText?: string;
+    /** Pagina iniziale da mostrare quando il PDF carica (es. da citazione chat) */
+    initialPage?: number;
 }
 
 export interface PdfViewerHandle {
     scrollToPage: (page: number) => void;
 }
 
-const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(({ url, zoom, onTextSelect }, ref) => {
+/** Evidenzia nel text layer tutte le occorrenze (case-insensitive) di `query` */
+function highlightTextLayer(container: HTMLDivElement, query: string) {
+    if (!query || !query.trim()) return;
+    // Prendi i primi 60 caratteri della query per un match più affidabile
+    const searchTerms = query.trim().slice(0, 80).split(/\s+/).filter(t => t.length > 3);
+    if (!searchTerms.length) return;
+
+    const spans = Array.from(container.querySelectorAll('span'));
+    spans.forEach(span => {
+        const text = span.textContent || '';
+        const matched = searchTerms.some(term => text.toLowerCase().includes(term.toLowerCase()));
+        if (matched) {
+            span.style.backgroundColor = 'rgba(255, 213, 0, 0.55)';
+            span.style.borderRadius = '2px';
+            span.style.color = 'inherit';
+            span.dataset.highlighted = 'true';
+        }
+    });
+}
+
+const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(({ url, zoom, onTextSelect, highlightText, initialPage }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const textLayerRef = useRef<HTMLDivElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -66,7 +90,8 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(({ url, zoom, onTe
                 }
                 setPdfDoc(doc);
                 setNumPages(doc.numPages);
-                setCurrentPage(1);
+                // Jump to the requested initial page (from citation deep link)
+                setCurrentPage(initialPage && initialPage >= 1 && initialPage <= doc.numPages ? initialPage : 1);
                 setIsLoading(false);
             })
             .catch((err) => {
@@ -124,12 +149,22 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(({ url, zoom, onTe
             });
             await textLayer.render();
 
+            // Evidenzia il testo della citazione se richiesto
+            if (highlightText && textLayerRef.current) {
+                highlightTextLayer(textLayerRef.current, highlightText);
+                // Scrolla al primo span evidenziato
+                const firstHighlight = textLayerRef.current.querySelector('[data-highlighted="true"]') as HTMLElement;
+                if (firstHighlight) {
+                    firstHighlight.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
+
         } catch (err: any) {
             if (err?.name !== 'RenderingCancelledException') {
                 console.error('PDF render error:', err);
             }
         }
-    }, [pdfDoc, zoom]);
+    }, [pdfDoc, zoom, highlightText]);
 
     useEffect(() => {
         if (pdfDoc) {

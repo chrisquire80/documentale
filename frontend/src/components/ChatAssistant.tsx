@@ -21,6 +21,7 @@ interface Message {
     role: 'user' | 'assistant';
     content: string;
     sources?: ChatSource[];
+    reasoning_steps?: string[];
 }
 
 interface ChatAssistantProps {
@@ -31,10 +32,8 @@ interface ChatAssistantProps {
     /** Se true, la chat è ancorata come pannello laterale */
     docked?: boolean;
     onToggleDock?: () => void;
-    /** Callback per aprire un documento in anteprima dalla citazione */
-    onOpenDocument?: (docId: string, docTitle: string) => void;
-    /** Callback per scrollare il PDF a una pagina specifica */
-    onScrollToPage?: (page: number) => void;
+    /** Callback per aprire un documento dalla citazione, con highlight e pagina */
+    onOpenDocument?: (docId: string, docTitle: string, page?: number, highlightText?: string) => void;
 }
 
 export interface ChatAssistantHandle {
@@ -49,7 +48,6 @@ const ChatAssistantBase: React.ForwardRefRenderFunction<ChatAssistantHandle, Cha
     docked = false,
     onToggleDock,
     onOpenDocument,
-    onScrollToPage,
 }, ref) => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
@@ -110,6 +108,7 @@ const ChatAssistantBase: React.ForwardRefRenderFunction<ChatAssistantHandle, Cha
                 role: 'assistant',
                 content: response.data.answer,
                 sources: response.data.sources,
+                reasoning_steps: response.data.reasoning_steps,
             }]);
         } catch (error: any) {
             const detail = error.response?.data?.detail || error.message || 'Errore di connessione';
@@ -207,6 +206,14 @@ const ChatAssistantBase: React.ForwardRefRenderFunction<ChatAssistantHandle, Cha
                 {messages.map(msg => (
                     <div key={msg.id} className={`chat-msg-row ${msg.role}`}>
                         <div className={`chat-bubble ${msg.role}`}>
+                                    {msg.reasoning_steps && msg.reasoning_steps.length > 0 && (
+                                        <details className="chat-reasoning">
+                                            <summary className="chat-reasoning-summary">\ud83d\udd0d Come ho trovato questa risposta</summary>
+                                            <ol className="chat-reasoning-steps">
+                                                {msg.reasoning_steps.map((step, i) => (<li key={i}>{step}</li>))}
+                                            </ol>
+                                        </details>
+                                    )}
                             <ReactMarkdown>{msg.content}</ReactMarkdown>
                             {msg.sources && msg.sources.length > 0 && (
                                 <div className="chat-sources">
@@ -215,18 +222,21 @@ const ChatAssistantBase: React.ForwardRefRenderFunction<ChatAssistantHandle, Cha
                                         {msg.sources.map((src, idx) => (
                                             <div key={idx} className="chat-source-item">
                                                 <span className="chat-source-title">{src.title}</span>
-                                                <div style={{ display: 'flex', gap: '0.25rem' }}>
-                                                    {onOpenDocument && (
-                                                        <button onClick={() => onOpenDocument(src.document_id, src.title)} className="chat-source-link">
-                                                            <ExternalLink size={10} />
-                                                        </button>
-                                                    )}
-                                                    {src.page_number && onScrollToPage && (
-                                                        <button onClick={() => onScrollToPage(src.page_number!)} className="chat-source-page">
-                                                            P{src.page_number}
-                                                        </button>
-                                                    )}
-                                                </div>
+                                                {onOpenDocument && (
+                                                    <button
+                                                        onClick={() => onOpenDocument(
+                                                            src.document_id,
+                                                            src.title,
+                                                            src.page_number,
+                                                            src.snippet
+                                                        )}
+                                                        className="chat-source-link"
+                                                        title={src.page_number ? `Apri pag. ${src.page_number}` : 'Apri documento'}
+                                                    >
+                                                        <ExternalLink size={10} />
+                                                        {src.page_number && <span style={{ fontSize: '0.68rem', marginLeft: '2px' }}>pag.{src.page_number}</span>}
+                                                    </button>
+                                                )}
                                             </div>
                                         ))}
                                     </div>

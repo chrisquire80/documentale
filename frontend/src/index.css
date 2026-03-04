@@ -1672,3 +1672,45 @@ mark {
   background: var(--accent);
   color: white;
 }
+/*  Glass-Box Reasoning (Wave 5)  */
+.chat-reasoning {
+  margin-bottom: 0.65rem;
+  background: rgba(56, 189, 248, 0.05);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.chat-reasoning-summary {
+  padding: 0.4rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #93c5fd;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.chat-reasoning-summary:hover {
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.chat-reasoning[open] .chat-reasoning-summary {
+  border-bottom: 1px solid rgba(56, 189, 248, 0.15);
+}
+
+.chat-reasoning-steps {
+  margin: 0;
+  padding: 0.5rem 0.65rem 0.5rem 1.5rem;
+  font-size: 0.72rem;
+  color: #9ca3af;
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.chat-reasoning-steps li {
+  list-style-type: decimal;
+}

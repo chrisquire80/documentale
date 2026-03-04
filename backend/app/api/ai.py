@@ -129,17 +129,23 @@ async def chat_with_documents(
 
     # 4. prompt Gemini con Retrieval-Augmented Generation
     prompt = f"""
-Sei un assistente aziendale intelligente e professionale. Rispondi alla domanda dell'utente basandoti ESCLUSIVAMENTE sul seguente contesto estratto dai documenti aziendali.
+Sei un assistente aziendale intelligente e professionale. Prima di rispondere, esegui i tuoi passi di ragionamento in italiano.
 
-CONTESTO:
+CONTESTO DOCUMENTI:
 {context_text}
 
 DOMANDA UTENTE: {request.query}
 
 ISTRUZIONI:
-- Rispondi in italiano in modo chiaro, conciso e diretto.
-- Se la risposta non è presente nel contesto, dichiara apertamente che non hai informazioni sufficienti nei documenti forniti, e NON inventare nulla.
-- Cita sempre le fonti in modo preciso. Se il contesto indica una pagina, includila (es. "In base al documento X, pagina Y...").
+1. Prima di rispondere, elenca i tuoi passaggi logici in una sezione delimitata ESATTAMENTE così:
+---RAGIONAMENTO---
+1. [primo passo]
+2. [secondo passo]
+3. [eventuale passo aggiuntivo]
+---FINE RAGIONAMENTO---
+2. Poi scrivi la risposta definitiva in italiano, concisa e professionale.
+3. Cita sempre le fonti precise con il nome del documento e la pagina se disponibile.
+4. Se la risposta non è nel contesto, dichiaralo chiaramente senza inventare.
 """
 
     try:
@@ -154,16 +160,41 @@ ISTRUZIONI:
         if not response or not response.text:
             print("RAG ERROR: Risposta Gemini vuota o nulla")
             answer = "Mi dispiace, Gemini non ha generato una risposta valida."
+            reasoning_steps = []
         else:
-            answer = response.text
-            print(f"RAG: Risposta generata con successo ({len(answer)} caratteri).")
+            raw_text = response.text
+            print(f"RAG: Risposta generata con successo ({len(raw_text)} caratteri).")
+            
+            # Parse reasoning steps from the structured block
+            import re as _re
+            reasoning_steps = []
+            reasoning_match = _re.search(
+                r'---RAGIONAMENTO---\s*(.+?)\s*---FINE RAGIONAMENTO---',
+                raw_text, _re.DOTALL
+            )
+            if reasoning_match:
+                steps_text = reasoning_match.group(1).strip()
+                for line in steps_text.split('\n'):
+                    line = line.strip()
+                    # Remove leading numbering like "1. ", "2. "
+                    line = _re.sub(r'^\d+\.\s*', '', line)
+                    if line:
+                        reasoning_steps.append(line)
+                # Remove the reasoning block from the final answer
+                answer = _re.sub(
+                    r'---RAGIONAMENTO---.*?---FINE RAGIONAMENTO---\s*',
+                    '', raw_text, flags=_re.DOTALL
+                ).strip()
+            else:
+                answer = raw_text
     except Exception as e:
         print(f"RAG ERROR: Fallimento durante la generazione con Gemini: {e}")
         raise HTTPException(status_code=500, detail=f"Errore chiamata Gemini: {str(e)}")
 
     return ChatResponse(
         answer=answer,
-        sources=sources
+        sources=sources,
+        reasoning_steps=reasoning_steps
     )
 
 

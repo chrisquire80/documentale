@@ -14,8 +14,18 @@ interface FocusViewProps {
 
 const FocusView: React.FC<FocusViewProps> = ({ doc, onClose }) => {
     const [zoom, setZoom] = useState(100);
+    const [citationHighlight, setCitationHighlight] = useState<string | undefined>(undefined);
     const pdfRef = useRef<PdfViewerHandle>(null);
     const chatRef = useRef<ChatAssistantHandle>(null);
+
+    const handleCitationClick = (docId: string, _title: string, page?: number, highlightText?: string) => {
+        // Only act if the citation is for the currently open document
+        if (docId !== doc.id) return;
+        setCitationHighlight(highlightText);
+        if (page && pdfRef.current) {
+            pdfRef.current.scrollToPage(page);
+        }
+    };
 
     const isPdf = doc.file_type?.toLowerCase() === 'pdf' || doc.file_path?.toLowerCase().endsWith('.pdf') || doc.title?.toLowerCase().endsWith('.pdf');
     const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(doc.file_type?.toLowerCase() || '') ||
@@ -75,6 +85,7 @@ const FocusView: React.FC<FocusViewProps> = ({ doc, onClose }) => {
                                 ref={pdfRef}
                                 url={previewUrl}
                                 zoom={zoom}
+                                highlightText={citationHighlight}
                                 onTextSelect={(text) => {
                                     chatRef.current?.sendMessage(text);
                                 }}
@@ -93,8 +104,7 @@ const FocusView: React.FC<FocusViewProps> = ({ doc, onClose }) => {
                         documentTitle={doc.title}
                         docked={true}
                         onToggleDock={() => { }}
-                        onOpenDocument={() => { }}
-                        onScrollToPage={(page) => pdfRef.current?.scrollToPage(page)}
+                        onOpenDocument={handleCitationClick}
                     />
                 </div>
             </div>
