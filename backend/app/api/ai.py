@@ -57,8 +57,10 @@ async def chat_with_documents(
         )
     )
 
-    # Se document_id è specificato, confina la ricerca
-    if request.document_id:
+    # Se document_ids (multi-doc chat) è specificato, filtra per lista; altrimenti document_id singolo
+    if request.document_ids and len(request.document_ids) >= 2:
+        stmt = stmt.where(Document.id.in_(request.document_ids))
+    elif request.document_id:
         stmt = stmt.where(Document.id == request.document_id)
 
     # Ordina per similarità (distanza coseno minore = più simile) e limita

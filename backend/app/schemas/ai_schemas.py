@@ -5,6 +5,7 @@ from uuid import UUID
 class ChatQueryRequest(BaseModel):
     query: str = Field(..., min_length=1, description="La domanda dell'utente")
     document_id: Optional[UUID] = Field(default=None, description="Se fornito, la ricerca RAG è confinata solo a questo documento")
+    document_ids: Optional[List[UUID]] = Field(default=None, description="Lista di documenti per la Chat di Gruppo")
 
 class ChatSource(BaseModel):
     document_id: str

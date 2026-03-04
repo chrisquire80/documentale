@@ -370,6 +370,7 @@ const DashboardPage: React.FC = () => {
                 selectedIds={selectedDocs}
                 onClearSelection={() => setSelectedDocs([])}
                 onSuccess={refetch}
+                selectedTitles={documents?.filter(d => selectedDocs.includes(d.id)).map(d => d.title)}
             />
 
             {isUploadOpen && (

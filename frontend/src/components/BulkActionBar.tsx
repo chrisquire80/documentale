@@ -1,17 +1,21 @@
 import React from 'react';
-import { Download, X, Trash2, GitCompareArrows } from 'lucide-react';
+import { Download, X, Trash2, GitCompareArrows, MessagesSquare } from 'lucide-react';
 import api from '../services/api';
 import CompareModal from './CompareModal';
+import MultiDocChatModal from './MultiDocChatModal';
 
 interface BulkActionBarProps {
     selectedIds: string[];
     onClearSelection: () => void;
     onSuccess?: () => void;
+    /** Optional titles for the selected documents (for display in multi-doc chat) */
+    selectedTitles?: string[];
 }
 
-const BulkActionBar: React.FC<BulkActionBarProps> = ({ selectedIds, onClearSelection, onSuccess }) => {
+const BulkActionBar: React.FC<BulkActionBarProps> = ({ selectedIds, onClearSelection, onSuccess, selectedTitles = [] }) => {
     const [isExporting, setIsExporting] = React.useState(false);
     const [showCompare, setShowCompare] = React.useState(false);
+    const [showGroupChat, setShowGroupChat] = React.useState(false);
 
     if (selectedIds.length === 0) return null;
 
@@ -94,6 +98,35 @@ const BulkActionBar: React.FC<BulkActionBarProps> = ({ selectedIds, onClearSelec
                     >
                         <X size={16} /> Annulla
                     </button>
+
+                    {/* Chat di Gruppo — appare solo con ≥2 selezionati */}
+                    {selectedIds.length >= 2 && (
+                        <button
+                            onClick={() => setShowGroupChat(true)}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                                background: 'rgba(56, 189, 248, 0.12)',
+                                color: '#38bdf8',
+                                border: '1px solid rgba(56, 189, 248, 0.3)',
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                                padding: '0.5rem 1rem',
+                                borderRadius: '0.375rem',
+                                transition: 'all 0.2s',
+                            }}
+                            onMouseOver={e => {
+                                e.currentTarget.style.background = 'rgba(56, 189, 248, 0.25)';
+                                e.currentTarget.style.borderColor = '#38bdf8';
+                            }}
+                            onMouseOut={e => {
+                                e.currentTarget.style.background = 'rgba(56, 189, 248, 0.12)';
+                                e.currentTarget.style.borderColor = 'rgba(56, 189, 248, 0.3)';
+                            }}
+                        >
+                            <MessagesSquare size={16} />
+                            Chat di Gruppo
+                        </button>
+                    )}
 
                     {/* Confronta AI — appare solo con ≥2 selezionati */}
                     {selectedIds.length >= 2 && (
@@ -187,6 +220,13 @@ const BulkActionBar: React.FC<BulkActionBarProps> = ({ selectedIds, onClearSelec
                 isOpen={showCompare}
                 onClose={() => setShowCompare(false)}
                 documentIds={selectedIds}
+            />
+
+            <MultiDocChatModal
+                isOpen={showGroupChat}
+                onClose={() => setShowGroupChat(false)}
+                documentIds={selectedIds}
+                documentTitles={selectedTitles}
             />
         </>
     );
