@@ -16,6 +16,7 @@ from ..models.document import Document, DocumentVersion, DocumentMetadata, Docum
 from ..models.audit import AuditLog
 from ..core.storage import LocalStorage
 from ..core.config import settings
+from ..api.ws import manager
 from ..services.ocr import extract_text as ocr_extract_text
 from ..services.llm_metadata import extract_metadata_from_text
 from ..services.embeddings import generate_embedding
@@ -41,8 +42,11 @@ class AutoIngestHandler(FileSystemEventHandler):
             ext = os.path.splitext(file_path)[1].lower()
             if ext in settings.ALLOWED_EXTENSIONS:
                 print(f"Watchdog: Detected new file {file_path}. Scheduling ingestion...")
-                # Schedule the async ingestion task
-                asyncio.run_coroutine_threadsafe(self.process_file(file_path), self.loop)
+                # Schedule the async ingestion task safely onto the main loop
+                self.loop.call_soon_threadsafe(
+                    lambda p: self.loop.create_task(self.process_file(p)),
+                    file_path
+                )
 
     async def get_system_user(self, db: AsyncSession):
         stmt = select(User).where(User.email == settings.AUTO_USER_EMAIL)
@@ -137,6 +141,19 @@ class AutoIngestHandler(FileSystemEventHandler):
 
                 await db.commit()
                 print(f"Watchdog: Successfully ingested {filename}. Marking as processed...")
+                
+                # Invia notifica WebSocket
+                try:
+                    await manager.broadcast({
+                        "type": "DOCUMENT_INGESTED",
+                        "document": {
+                            "id": str(doc.id),
+                            "title": doc.title
+                        },
+                        "message": f"Nuovo documento importato: {doc.title}"
+                    })
+                except Exception as e:
+                    print(f"Watchdog: Impossibile inviare notifica WS: {e}")
                 
                 # Create a marker file so it doesn't get processed again
                 marker_file = f"{file_path}.processed"

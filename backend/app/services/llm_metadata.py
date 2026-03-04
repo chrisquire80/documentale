@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 # Configura l'SDK solo se abilitato e con chiave presente
 if settings.GEMINI_ENABLED and settings.GEMINI_API_KEY:
     genai.configure(api_key=settings.GEMINI_API_KEY)
-    # Use gemini-1.5-flash as it is fast and suitable for extraction
-    model = genai.GenerativeModel('models/gemini-1.5-flash')
+    # Use gemini-2.0-flash as it is fast and suitable for extraction
+    model = genai.GenerativeModel('models/gemini-2.0-flash')
 else:
     model = None
 

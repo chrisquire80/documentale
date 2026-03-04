@@ -16,6 +16,7 @@ import SidebarFilters from '../components/SidebarFilters';
 import type { FilterState } from '../components/SidebarFilters';
 import BulkActionBar from '../components/BulkActionBar';
 import DocumentRow from '../components/DocumentRow';
+import { useWebSocket } from '../hooks/useWebSocket';
 
 const ITEMS_PER_PAGE = 20;
 const SKELETON_COUNT = 6;
@@ -63,6 +64,20 @@ const DashboardPage: React.FC = () => {
         setViewMode(mode);
         localStorage.setItem('docViewMode', mode);
     };
+
+    // WebSocket Notifications
+    const { lastMessage } = useWebSocket();
+    const [toast, setToast] = useState<{ message: string, id: number } | null>(null);
+
+    useEffect(() => {
+        if (lastMessage && lastMessage.type === 'DOCUMENT_INGESTED') {
+            setToast({ message: lastMessage.message || 'Nuovo documento importato', id: Date.now() });
+            queryClient.invalidateQueries({ queryKey: ['documents'] });
+
+            const timer = setTimeout(() => setToast(null), 5000);
+            return () => clearTimeout(timer);
+        }
+    }, [lastMessage, queryClient]);
 
     // Debounce
     useEffect(() => {
@@ -390,6 +405,34 @@ const DashboardPage: React.FC = () => {
                 onToggleDock={() => setChatDocked(d => !d)}
                 onOpenDocument={(docId, docTitle) => setChatDoc({ id: docId, title: docTitle })}
             />
+
+            {/* Live Notifications Toast */}
+            {toast && (
+                <div style={{
+                    position: 'fixed',
+                    bottom: '2rem',
+                    right: '2rem',
+                    background: 'var(--accent)',
+                    color: 'var(--bg-dark)',
+                    padding: '1rem 1.5rem',
+                    borderRadius: '8px',
+                    boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.75rem',
+                    zIndex: 9999,
+                    animation: 'slideUp 0.3s ease-out'
+                }}>
+                    <Sparkles size={20} />
+                    <span style={{ fontWeight: 600 }}>{toast.message}</span>
+                    <button
+                        onClick={() => setToast(null)}
+                        style={{ background: 'transparent', border: 'none', color: 'var(--bg-dark)', cursor: 'pointer', marginLeft: '1rem' }}
+                    >
+                        &times;
+                    </button>
+                </div>
+            )}
         </div>
     );
 };

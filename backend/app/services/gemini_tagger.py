@@ -50,7 +50,7 @@ async def suggest_tags(text: str, title: str = "") -> List[str]:
         import google.generativeai as genai
 
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.0-flash")
 
         # Gemini SDK è sincrono; eseguiamo in thread-pool
         def _call() -> str:
