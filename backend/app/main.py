@@ -34,6 +34,7 @@ from .api import auth, documents, admin, shares, comments, ws, ai
 from .services import watcher
 from .models.share import DocumentPublicShare
 from .models.comment import DocumentComment
+from .models.segnalazione import GovernanceSegnalazione  # noqa: F401 — ensures table creation
 
 app.include_router(auth.router)
 app.include_router(documents.router)

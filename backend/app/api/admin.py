@@ -325,3 +325,285 @@ async def export_audit_logs(
         headers={"Content-Disposition": "attachment; filename=audit_logs.csv"}
     )
 
+
+# ── Wave 7: Enterprise Governance Dashboard ────────────────────────────────
+
+from ..models.document import DocumentVersion, AIStatus
+from sqlalchemy.orm import selectinload
+from sqlalchemy import desc
+
+@router.get("/stats/dashboard")
+async def get_dashboard_kpis(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restituisce i KPI principali (Total Docs, AI Ready, Errors)."""
+    _require_admin(current_user)
+
+    total_stmt = select(func.count(Document.id)).where(Document.is_deleted == False)
+    total_docs = (await db.execute(total_stmt)).scalar() or 0
+
+    ready_stmt = (
+        select(func.count(Document.id))
+        .join(DocumentVersion, Document.current_version_id == DocumentVersion.id)
+        .where(Document.is_deleted == False, DocumentVersion.ai_status == AIStatus.READY)
+    )
+    ai_ready_count = (await db.execute(ready_stmt)).scalar() or 0
+
+    error_stmt = (
+        select(func.count(Document.id))
+        .join(DocumentVersion, Document.current_version_id == DocumentVersion.id)
+        .where(Document.is_deleted == False, DocumentVersion.ai_status == AIStatus.ERROR)
+    )
+    indexing_errors = (await db.execute(error_stmt)).scalar() or 0
+
+    ai_ready_percentage = round((ai_ready_count / total_docs * 100)) if total_docs > 0 else 0
+
+    return {
+        "total_documents": total_docs,
+        "ai_ready_percentage": ai_ready_percentage,
+        "indexing_errors": indexing_errors
+    }
+
+@router.get("/stats/departments")
+async def get_departments_distribution(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Distribuzione dei documenti per dipartimento."""
+    _require_admin(current_user)
+
+    stmt = (
+        select(Document.department, func.count(Document.id).label("count"))
+        .where(Document.is_deleted == False)
+        .group_by(Document.department)
+        .order_by(desc("count"))
+    )
+    rows = (await db.execute(stmt)).all()
+    
+    return [
+        {"department": r.department or "Non Assegnato", "count": r.count}
+        for r in rows
+    ]
+
+@router.get("/stats/queries")
+async def get_top_queries(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """I documenti più interrogati dall'AI negli ultimi 30 giorni."""
+    _require_admin(current_user)
+
+    stmt = (
+        select(Document.title, func.count(AuditLog.id).label("query_count"))
+        .join(Document, AuditLog.target_id == Document.id)
+        .where(
+            AuditLog.action == "AI_CHAT",
+            AuditLog.timestamp >= func.now() - func.cast("30 days", type_=None)
+        )
+        .group_by(Document.title)
+        .order_by(desc("query_count"))
+        .limit(5)
+    )
+    rows = (await db.execute(stmt)).all()
+    
+    return [
+        {"document_title": r.title, "query_count": r.query_count}
+        for r in rows
+    ]
+
+@router.get("/audit-logs")
+async def get_admin_audit_logs(
+    skip: int = 0,
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Log di Audit per la compliance AI Act."""
+    _require_admin(current_user)
+
+    stmt = (
+        select(AuditLog, User.email, Document.title, Document.department)
+        .outerjoin(User, AuditLog.user_id == User.id)
+        .outerjoin(Document, AuditLog.target_id == Document.id)
+        .where(AuditLog.action == "AI_CHAT")
+        .order_by(desc(AuditLog.timestamp))
+        .offset(skip)
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
+
+    total_stmt = select(func.count(AuditLog.id)).where(AuditLog.action == "AI_CHAT")
+    total = (await db.execute(total_stmt)).scalar() or 0
+
+    logs_out = []
+    for r in rows:
+        audit, email, doc_title, doc_dept = r
+        logs_out.append({
+            "id": str(audit.id),
+            "timestamp": audit.timestamp,
+            "user_email": email or "System",
+            "department": doc_dept or "Generale",
+            "document_title": doc_title or "Multi-Document",
+            "query": audit.query,
+            "ai_response": audit.ai_response,
+            "status": "Validata" # In futuro "Segnalata" integrando il feedback
+        })
+
+    return {
+        "items": logs_out,
+        "total": total,
+        "page": skip // limit + 1,
+        "size": limit
+    }
+
+# ── Wave 8: Governance Segnalazioni AI ────────────────────────────────────────
+
+from ..models.segnalazione import (
+    GovernanceSegnalazione,
+    StatoSegnalazione,
+    PrioritaSegnalazione,
+)
+import random
+from datetime import datetime, timedelta, timezone
+
+
+class SegnalazioneCreate(BaseModel):
+    document_title: str
+    document_id: UUID | None = None
+    stato: StatoSegnalazione = StatoSegnalazione.segnalata
+    priorita: PrioritaSegnalazione = PrioritaSegnalazione.media
+    note: str | None = None
+
+
+class SegnalazioneUpdate(BaseModel):
+    stato: StatoSegnalazione | None = None
+    note: str | None = None
+
+
+def _generate_report_code() -> str:
+    """Genera un codice univoco tipo RPT-XXXXXX."""
+    return f"RPT-{random.randint(100000, 999999)}"
+
+
+@router.get("/governance/segnalazioni")
+async def list_segnalazioni(
+    stato: StatoSegnalazione | None = None,
+    priorita: PrioritaSegnalazione | None = None,
+    days: int = 30,
+    skip: int = 0,
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lista delle segnalazioni Governance AI — solo per amministratori."""
+    _require_admin(current_user)
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    stmt = select(GovernanceSegnalazione).where(
+        GovernanceSegnalazione.reported_at >= cutoff
+    )
+
+    if stato:
+        stmt = stmt.where(GovernanceSegnalazione.stato == stato)
+    if priorita:
+        stmt = stmt.where(GovernanceSegnalazione.priorita == priorita)
+
+    stmt = stmt.order_by(GovernanceSegnalazione.reported_at.desc()).offset(skip).limit(limit)
+    rows = (await db.execute(stmt)).scalars().all()
+
+    count_stmt = select(func.count(GovernanceSegnalazione.id)).where(
+        GovernanceSegnalazione.reported_at >= cutoff
+    )
+    if stato:
+        count_stmt = count_stmt.where(GovernanceSegnalazione.stato == stato)
+    if priorita:
+        count_stmt = count_stmt.where(GovernanceSegnalazione.priorita == priorita)
+    total: int = (await db.execute(count_stmt)).scalar() or 0
+
+    return {
+        "items": [
+            {
+                "id": str(s.id),
+                "report_code": s.report_code,
+                "document_title": s.document_title,
+                "document_id": str(s.document_id) if s.document_id else None,
+                "reported_at": s.reported_at,
+                "stato": s.stato,
+                "priorita": s.priorita,
+                "note": s.note,
+            }
+            for s in rows
+        ],
+        "total": total,
+        "page": skip // limit + 1,
+        "size": limit,
+    }
+
+
+@router.post("/governance/segnalazioni", status_code=201)
+async def create_segnalazione(
+    payload: SegnalazioneCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Crea una nuova segnalazione Governance AI — solo per amministratori."""
+    _require_admin(current_user)
+
+    # Ensure uniqueness of report code with minimal retry
+    for _ in range(5):
+        code = _generate_report_code()
+        existing = (
+            await db.execute(
+                select(GovernanceSegnalazione).where(
+                    GovernanceSegnalazione.report_code == code
+                )
+            )
+        ).scalar_one_or_none()
+        if not existing:
+            break
+
+    segnalazione = GovernanceSegnalazione(
+        report_code=code,
+        document_title=payload.document_title,
+        document_id=payload.document_id,
+        stato=payload.stato,
+        priorita=payload.priorita,
+        note=payload.note,
+        created_by=current_user.id,
+    )
+    db.add(segnalazione)
+    await db.commit()
+    await db.refresh(segnalazione)
+
+    return {
+        "message": "Segnalazione creata con successo",
+        "id": str(segnalazione.id),
+        "report_code": segnalazione.report_code,
+    }
+
+
+@router.patch("/governance/segnalazioni/{segnalazione_id}")
+async def update_segnalazione(
+    segnalazione_id: UUID,
+    payload: SegnalazioneUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Aggiorna stato e/o note di una segnalazione — solo per amministratori."""
+    _require_admin(current_user)
+
+    stmt = select(GovernanceSegnalazione).where(
+        GovernanceSegnalazione.id == segnalazione_id
+    )
+    segnalazione = (await db.execute(stmt)).scalar_one_or_none()
+    if not segnalazione:
+        raise HTTPException(status_code=404, detail="Segnalazione non trovata")
+
+    if payload.stato is not None:
+        segnalazione.stato = payload.stato
+    if payload.note is not None:
+        segnalazione.note = payload.note
+
+    await db.commit()
+    return {"message": "Segnalazione aggiornata con successo"}
