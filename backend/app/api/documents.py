@@ -11,7 +11,6 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update as sa_update, delete as sa_delete, or_, and_, distinct, func, cast
 from sqlalchemy.orm import selectinload
-import asyncio
 from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
@@ -155,17 +154,31 @@ async def _run_ocr_background(
                     
                     # 2. Update DocumentVersion AI Summary & Status
                     if doc.current_version_id:
-                        from ..models.document import DocumentVersion, Tag, DocumentVersionTag
+                        from ..models.document import DocumentVersion, Tag, DocumentVersionTag, TagStatus
                         ver_stmt = select(DocumentVersion).where(DocumentVersion.id == doc.current_version_id)
                         ver = (await db.execute(ver_stmt)).scalar_one_or_none()
                         if ver:
                             ver.ai_status = "ready"
-                            if ai_metadata and ai_metadata.get("summary"):
-                                ver.ai_summary = ai_metadata["summary"]
+                            if ai_metadata:
+                                if ai_metadata.get("summary"):
+                                    ver.ai_summary = ai_metadata["summary"]
+                                ver.ai_entities = ai_metadata.get("entities")
+                                ver.ai_reasoning = ai_metadata.get("reasoning")
+
+                            if ai_metadata and ai_metadata.get("category"):
+                                doc.category = ai_metadata["category"]
                             
                             # 3. Add auto-tags into DocumentVersionTag
                             if ai_metadata and ai_metadata.get("tags"):
-                                for tag_name in ai_metadata["tags"]:
+                                for tag_data in ai_metadata["tags"]:
+                                    if isinstance(tag_data, str):
+                                        # Fallback per vecchi prompt o errori
+                                        tag_name = tag_data
+                                        page_num = None
+                                    else:
+                                        tag_name = tag_data.get("name")
+                                        page_num = tag_data.get("page")
+
                                     tag_name_clean = str(tag_name).strip().lower()
                                     if not tag_name_clean: continue
                                     
@@ -186,7 +199,9 @@ async def _run_ocr_background(
                                         db.add(DocumentVersionTag(
                                             document_version_id=ver.id,
                                             tag_id=existing_tag.id,
-                                            is_ai_generated=True
+                                            is_ai_generated=True,
+                                            status=TagStatus.SUGGESTED, # AI tags sono suggeriti finchè non validati
+                                            page_number=page_num
                                         ))
 
                 # Update structured legacy metadata block
@@ -322,6 +337,30 @@ async def upload_document(
             selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
         )
         .where(Document.id == doc.id)
+    )
+    doc_final = (await db.execute(stmt)).scalar_one()
+    return doc_final
+
+
+@router.get("/{doc_id}", response_model=DocumentResponse)
+async def get_document(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restituisce i metadati completi di un singolo documento."""
+    doc = await _get_accessible_doc(doc_id, current_user, db)
+    
+    # Re-fetch with all relationships for schema matching
+    stmt = (
+        select(Document)
+        .options(
+            selectinload(Document.metadata_entries),
+            selectinload(Document.owner),
+            selectinload(Document.content),
+            selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
+        )
+        .where(Document.id == doc_id)
     )
     doc_final = (await db.execute(stmt)).scalar_one()
     return doc_final
@@ -1364,3 +1403,55 @@ async def bulk_delete_documents(
             pass
 
     return {"message": f"Successfully moved {deleted_count} documents to trash"}
+
+@router.post("/{doc_id}/tags/{tag_id}/approve")
+async def approve_tag(
+    doc_id: UUID,
+    tag_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Valida un tag suggerito dall'IA per l'attuale versione del documento."""
+    doc = await _get_accessible_doc(doc_id, current_user, db)
+    if not doc.current_version_id:
+        raise HTTPException(status_code=400, detail="Il documento non ha una versione corrente.")
+    
+    from ..models.document import DocumentVersionTag, TagStatus
+    stmt = (
+        sa_update(DocumentVersionTag)
+        .where(
+            DocumentVersionTag.document_version_id == doc.current_version_id,
+            DocumentVersionTag.tag_id == tag_id
+        )
+        .values(status=TagStatus.VALIDATED)
+    )
+    result = await db.execute(stmt)
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Associazione tag non trovata.")
+    
+    await db.commit()
+    return {"message": "Tag validato correttamente."}
+
+@router.delete("/{doc_id}/tags/{tag_id}/reject")
+async def reject_tag(
+    doc_id: UUID,
+    tag_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Rifiuta e rimuove un tag suggerito dall'IA per l'attuale versione del documento."""
+    doc = await _get_accessible_doc(doc_id, current_user, db)
+    if not doc.current_version_id:
+        raise HTTPException(status_code=400, detail="Il documento non ha una versione corrente.")
+    
+    from ..models.document import DocumentVersionTag
+    stmt = sa_delete(DocumentVersionTag).where(
+        DocumentVersionTag.document_version_id == doc.current_version_id,
+        DocumentVersionTag.tag_id == tag_id
+    )
+    result = await db.execute(stmt)
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Associazione tag non trovata.")
+    
+    await db.commit()
+    return {"message": "Tag rimosso correttamente."}

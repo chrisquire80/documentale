@@ -24,7 +24,7 @@ async def fake_redis():
     await client.aclose()
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def db_engine():
     engine = create_async_engine(settings.DATABASE_URL)
     yield engine
@@ -39,11 +39,21 @@ async def client(db_engine):
         async with SessionLocal() as session:
             yield session
 
+    from app import db as app_db
+    original_session_local = app_db.SessionLocal
+    original_engine = app_db.engine
+    
+    app_db.SessionLocal = SessionLocal
+    app_db.engine = db_engine
     app.dependency_overrides[get_db] = override_get_db
+    
     from httpx import ASGITransport
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
+    
     app.dependency_overrides.clear()
+    app_db.SessionLocal = original_session_local
+    app_db.engine = original_engine
 
 
 @pytest_asyncio.fixture
@@ -58,6 +68,14 @@ async def db_session(db_engine):
 async def admin_user(db_session):
     from app.models.user import User, UserRole
     from app.core.security import get_password_hash
+    from sqlalchemy.future import select
+
+    # Check if user already exists
+    stmt = select(User).where(User.email == "admin_test@example.com")
+    existing_user = (await db_session.execute(stmt)).scalar_one_or_none()
+    if existing_user:
+        return existing_user
+
     user = User(
         email="admin_test@example.com",
         hashed_password=get_password_hash("password123"),

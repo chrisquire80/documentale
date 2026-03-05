@@ -12,6 +12,7 @@ from ..db import get_db
 from ..models.user import User, UserRole
 from ..models.document import Document
 from ..models.audit import AuditLog
+from ..models.segnalazione import GovernanceSegnalazione, GovernanceSegnalazioneHistory, AzioneSegnalazione
 from ..core.cache import get_redis
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -574,8 +575,7 @@ async def create_segnalazione(
         created_by=current_user.id,
     )
     db.add(segnalazione)
-    await db.commit()
-    await db.refresh(segnalazione)
+    await db.flush() # Get ID
 
     # Crea log in history
     from ..models.segnalazione import GovernanceSegnalazioneHistory, AzioneSegnalazione
@@ -666,7 +666,10 @@ async def get_segnalazione_audit_trail(
     from sqlalchemy.orm import selectinload
     stmt = (
         select(GovernanceSegnalazione)
-        .options(selectinload(GovernanceSegnalazione.history))
+        .options(
+            selectinload(GovernanceSegnalazione.history).selectinload(GovernanceSegnalazioneHistory.created_by),
+            selectinload(GovernanceSegnalazione.assigned_user)
+        )
         .where(GovernanceSegnalazione.id == segnalazione_id)
     )
     segnalazione = (await db.execute(stmt)).scalar_one_or_none()
@@ -674,18 +677,12 @@ async def get_segnalazione_audit_trail(
     if not segnalazione:
         raise HTTPException(status_code=404, detail="Segnalazione non trovata")
         
-    # Get user info for history
-    from ..models.user import User as DBUser
-    
     history_res = []
     for h in segnalazione.history:
-        # Resolve username
-        user_stmt = select(DBUser).where(DBUser.id == h.created_by_id)
-        u: DBUser = (await db.execute(user_stmt)).scalar_one_or_none()
-        username = u.email if u else "Sconosciuto"
+        username = h.created_by.email if h.created_by else "Sconosciuto"
         
         history_res.append({
-            "id": str(h.id),
+            "id": h.id,
             "action_type": h.action_type.value,
             "old_value": h.old_value,
             "new_value": h.new_value,
@@ -693,25 +690,24 @@ async def get_segnalazione_audit_trail(
             "created_by": username
         })
         
-    user_stmt_main = select(DBUser).where(DBUser.id == segnalazione.created_by)
-    u_main: DBUser = (await db.execute(user_stmt_main)).scalar_one_or_none()
+    from ..models.user import User as DBUser
+    # Resolve main creator email
+    u_main_stmt = select(DBUser).where(DBUser.id == segnalazione.created_by)
+    u_main = (await db.execute(u_main_stmt)).scalar_one_or_none()
 
-    assigned_email = "Non assegnato"
-    if segnalazione.assigned_to:
-        u_assigned = (await db.execute(select(DBUser).where(DBUser.id == segnalazione.assigned_to))).scalar_one_or_none()
-        assigned_email = u_assigned.email if u_assigned else "Sconosciuto"
+    assigned_email = segnalazione.assigned_user.email if segnalazione.assigned_user else "Non assegnato"
         
     return {
-        "id": str(segnalazione.id),
+        "id": segnalazione.id,
         "report_code": segnalazione.report_code,
         "document_title": segnalazione.document_title,
-        "document_id": str(segnalazione.document_id) if segnalazione.document_id else None,
+        "document_id": segnalazione.document_id,
         "reported_at": segnalazione.reported_at,
         "stato": segnalazione.stato.value,
         "priorita": segnalazione.priorita.value,
         "note": segnalazione.note,
         "created_by": u_main.email if u_main else "Sconosciuto",
-        "assigned_to": str(segnalazione.assigned_to) if segnalazione.assigned_to else None,
+        "assigned_to": segnalazione.assigned_to,
         "assigned_to_email": assigned_email,
         "history": sorted(history_res, key=lambda x: x["created_at"])
     }
