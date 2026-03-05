@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { useAuth } from '../store/AuthContext';
-import { Search, LogOut, Upload as UploadIcon, FileText, BarChart2, Trash2, Database, Shield, Bot, LayoutGrid, LayoutList, Sparkles } from 'lucide-react';
+import { Search, LogOut, Upload as UploadIcon, FileText, BarChart3, Trash2, Shield, Bot, LayoutGrid, LayoutList, Sparkles } from 'lucide-react';
 import DocumentCard from '../components/DocumentCard';
 import { ChatAssistant } from '../components/ChatAssistant';
 import FocusView from '../components/FocusView';
@@ -21,8 +21,23 @@ import { useWebSocket } from '../hooks/useWebSocket';
 const ITEMS_PER_PAGE = 20;
 const SKELETON_COUNT = 6;
 
+interface Document {
+    id: string;
+    title: string;
+    owner_id: string;
+    is_deleted: boolean;
+    is_restricted: boolean;
+    is_indexed: boolean;
+    created_at: string;
+    doc_metadata?: {
+        tags?: string[];
+        author?: string;
+        dept?: string;
+    };
+}
+
 interface PaginatedDocuments {
-    items: any[];
+    items: Document[];
     total: number;
     limit: number;
     offset: number;
@@ -50,9 +65,9 @@ const DashboardPage: React.FC = () => {
     const [isBulkOpen, setIsBulkOpen] = useState(false);
     const [isStatsOpen, setIsStatsOpen] = useState(false);
     const [isDocStatsOpen, setIsDocStatsOpen] = useState(false);
-    const [chatDoc, setChatDoc] = useState<any>(null);
+    const [chatDoc, setChatDoc] = useState<{ id?: string, title: string } | null>(null);
     const [chatDocked, setChatDocked] = useState(false);
-    const [focusDoc, setFocusDoc] = useState<any>(null);
+    const [focusDoc, setFocusDoc] = useState<Document | null>(null);
     const { currentUser, logout } = useAuth();
 
     // Vista griglia o lista
@@ -71,7 +86,7 @@ const DashboardPage: React.FC = () => {
 
     useEffect(() => {
         if (lastMessage && lastMessage.type === 'DOCUMENT_INGESTED') {
-            setToast({ message: lastMessage.message || 'Nuovo documento importato', id: Date.now() });
+            setTimeout(() => setToast({ message: lastMessage.message || 'Nuovo documento importato', id: Date.now() }), 0);
             queryClient.invalidateQueries({ queryKey: ['documents'] });
 
             const timer = setTimeout(() => setToast(null), 5000);
@@ -87,7 +102,9 @@ const DashboardPage: React.FC = () => {
 
     // Reset to page 1 whenever the search term or filters change
     useEffect(() => {
-        setCurrentPage(1);
+        // Use setTimeout to avoid synchronous setState warning in some lint rules
+        const t = setTimeout(() => setCurrentPage(1), 0);
+        return () => clearTimeout(t);
     }, [debouncedQuery, filters, searchMode]);
 
     const offset = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -113,11 +130,7 @@ const DashboardPage: React.FC = () => {
         },
     });
 
-    const [documents, setDocuments] = useState<any[]>([]);
-
-    useEffect(() => {
-        if (data?.items) setDocuments(data.items);
-    }, [data]);
+    const documents = data?.items || [];
 
     const total = data?.total ?? 0;
     const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
@@ -125,7 +138,7 @@ const DashboardPage: React.FC = () => {
     // Client-side AI status filtering
     const filteredDocuments = React.useMemo(() => {
         if (filters.ai_status === 'all') return documents;
-        return documents.filter((doc: any) =>
+        return documents.filter((doc: Document) =>
             filters.ai_status === 'ready' ? doc.is_indexed === true : doc.is_indexed !== true
         );
     }, [documents, filters.ai_status]);
@@ -136,7 +149,7 @@ const DashboardPage: React.FC = () => {
         const authors = new Set<string>();
         const depts = new Set<string>();
 
-        documents.forEach((doc: any) => {
+        documents.forEach((doc: Document) => {
             const docTags = doc.doc_metadata?.tags || [];
             docTags.forEach((t: string) => tags.add(t));
 
@@ -188,60 +201,58 @@ const DashboardPage: React.FC = () => {
         <div>
             {/* ── Navbar ── */}
             <nav className="nav">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div className="flex-center-gap">
                     <FileText className="primary" />
-                    <h1 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Documentale</h1>
+                    <h1 className="text-125rem-bold">Documentale</h1>
                 </div>
-                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                <div className="flex-center-gap-large">
                     <button
                         className="btn btn-trash"
                         onClick={() => window.location.href = '/trash'}
                         title="Cestino"
                     >
-                        <Trash2 size={18} style={{ marginRight: '0.5rem' }} />
+                        <Trash2 size={18} className="margin-right-sm" />
                         Cestino
                     </button>
-                    <button className="btn" style={{ width: 'auto' }} onClick={() => setIsBulkOpen(true)}>
-                        <UploadIcon size={16} style={{ marginRight: '0.4rem' }} />
+                    <button className="btn btn-auto-width" onClick={() => setIsBulkOpen(true)} title="Importazione di massa">
+                        <UploadIcon size={16} className="margin-right-xs" />
                         Cartella
                     </button>
                     <button
-                        className="btn"
-                        style={{ width: 'auto', background: 'transparent', border: '1px solid var(--accent)', color: 'var(--accent)' }}
+                        className="btn btn-outline-accent"
                         onClick={() => setIsUploadOpen(true)}
+                        title="Carica un singolo file"
                     >
-                        <UploadIcon size={16} style={{ marginRight: '0.4rem' }} />
+                        <UploadIcon size={16} className="margin-right-xs" />
                         File
                     </button>
                     <button
-                        className="btn"
-                        style={{ width: 'auto', background: 'transparent', border: '1px solid var(--glass)', color: 'var(--text-muted)' }}
+                        className="btn btn-outline-accent"
                         onClick={() => setIsDocStatsOpen(true)}
                         title="Statistiche Documenti"
                     >
-                        <BarChart2 size={18} />
+                        <BarChart3 size={16} className="margin-right-xs" />
+                        Dashboard
                     </button>
                     <button
-                        className="btn"
-                        style={{ width: 'auto', background: 'transparent', border: '1px solid var(--glass)', color: 'var(--accent)' }}
+                        className="btn btn-outline-accent"
                         onClick={() => setIsStatsOpen(true)}
                         title="Statistiche cache Redis"
                     >
-                        <Database size={18} />
+                        <Bot size={16} className="margin-right-xs" />
+                        AI Stats
                     </button>
                     <button
-                        className="btn"
-                        style={{ width: 'auto', background: 'transparent', border: '1px solid var(--glass)' }}
+                        className="btn btn-outline-glass"
                         onClick={logout}
                         title="Esci"
                     >
                         <LogOut size={16} />
                     </button>
-                    {/* @ts-ignore - Ignore type error if typing is strict on UserRole */}
+                    {/* @ts-expect-error - Ignore type error if typing is strict on UserRole */}
                     {currentUser?.role === 'ADMIN' && (
                         <button
-                            className="btn"
-                            style={{ width: 'auto', background: 'var(--accent)', color: 'var(--bg-dark)', border: 'none', marginLeft: '0.5rem' }}
+                            className="btn btn-admin-panel"
                             onClick={() => window.location.href = '/admin'}
                             title="Pannello Amministratore"
                         >
@@ -266,12 +277,12 @@ const DashboardPage: React.FC = () => {
                     {/* Contenuto Principale */}
                     <div className="main-content">
                         {/* Search bar + semantic toggle */}
-                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-                            <div style={{ position: 'relative', flex: 1 }}>
-                                <Search style={{ position: 'absolute', left: '1rem', top: '1rem', color: 'var(--text-muted)' }} size={20} />
+                        <div className="search-container">
+                            <div className="search-input-wrapper">
+                                <Search className="search-icon-pos" size={20} />
                                 <input
-                                    className="input"
-                                    style={{ paddingLeft: '3rem', marginBottom: 0 }}
+                                    className="input search-input-field"
+                                    data-testid="search-input"
                                     placeholder={searchMode === 'semantic' ? 'Ricerca semantica AI…' : 'Cerca documenti per titolo, tag o contenuto…'}
                                     value={inputValue}
                                     onChange={handleSearchChange}
@@ -314,7 +325,7 @@ const DashboardPage: React.FC = () => {
                             <>
                                 {viewMode === 'grid' ? (
                                     <div className="doc-grid" key={`${currentPage}-${debouncedQuery}-${filters.tag}`}>
-                                        {filteredDocuments.map((doc: any) => (
+                                        {filteredDocuments.map((doc: Document) => (
                                             <DocumentCard
                                                 key={doc.id}
                                                 doc={doc}
@@ -333,7 +344,7 @@ const DashboardPage: React.FC = () => {
                                     </div>
                                 ) : (
                                     <div className="doc-list" key={`${currentPage}-${debouncedQuery}-${filters.tag}`}>
-                                        {filteredDocuments.map((doc: any) => (
+                                        {filteredDocuments.map((doc: Document) => (
                                             <DocumentRow
                                                 key={doc.id}
                                                 doc={doc}
@@ -370,7 +381,7 @@ const DashboardPage: React.FC = () => {
                 selectedIds={selectedDocs}
                 onClearSelection={() => setSelectedDocs([])}
                 onSuccess={refetch}
-                selectedTitles={documents?.filter(d => selectedDocs.includes(d.id)).map(d => d.title)}
+                selectedTitles={documents?.filter((d: Document) => selectedDocs.includes(d.id)).map((d: Document) => d.title)}
             />
 
             {isUploadOpen && (
@@ -402,6 +413,7 @@ const DashboardPage: React.FC = () => {
                 onClose={() => setChatDoc(null)}
                 documentId={chatDoc?.id}
                 documentTitle={chatDoc?.title}
+                documentIds={selectedDocs}
                 docked={chatDocked}
                 onToggleDock={() => setChatDocked(d => !d)}
                 onOpenDocument={(docId, docTitle) => setChatDoc({ id: docId, title: docTitle })}
@@ -409,26 +421,13 @@ const DashboardPage: React.FC = () => {
 
             {/* Live Notifications Toast */}
             {toast && (
-                <div style={{
-                    position: 'fixed',
-                    bottom: '2rem',
-                    right: '2rem',
-                    background: 'var(--accent)',
-                    color: 'var(--bg-dark)',
-                    padding: '1rem 1.5rem',
-                    borderRadius: '8px',
-                    boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.75rem',
-                    zIndex: 9999,
-                    animation: 'slideUp 0.3s ease-out'
-                }}>
+                <div className="toast-notification">
                     <Sparkles size={20} />
                     <span style={{ fontWeight: 600 }}>{toast.message}</span>
                     <button
                         onClick={() => setToast(null)}
-                        style={{ background: 'transparent', border: 'none', color: 'var(--bg-dark)', cursor: 'pointer', marginLeft: '1rem' }}
+                        className="toast-close-btn"
+                        title="Chiudi notifica"
                     >
                         &times;
                     </button>

@@ -14,6 +14,15 @@ const BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:8
 type Stato = 'segnalata' | 'in_revisione' | 'risolta';
 type Priorita = 'alta' | 'media' | 'bassa';
 
+interface SegnalazioneHistory {
+    id: string;
+    action_type: 'created' | 'status_changed' | 'note_added' | 'assigned';
+    old_value: string | null;
+    new_value: string | null;
+    created_at: string;
+    created_by: string;
+}
+
 interface Segnalazione {
     id: string;
     report_code: string;
@@ -23,6 +32,8 @@ interface Segnalazione {
     stato: Stato;
     priorita: Priorita;
     note: string | null;
+    history?: SegnalazioneHistory[];
+    created_by?: string;
 }
 
 interface SegnalazioniResponse {
@@ -51,29 +62,195 @@ function formatDate(iso: string): string {
     return d.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-// ─── Sub-component: View Note Modal ──────────────────────────────────────────
+// ─── Sub-component: Dettaglio Segnalazione Modal (Audit Trail) ────────────────
 
-function NoteModal({ segnalazione, onClose }: { segnalazione: Segnalazione; onClose: () => void }) {
+function DettaglioSegnalazioneModal({
+    segnalazioneId,
+    onClose,
+    token
+}: {
+    segnalazioneId: string;
+    onClose: () => void;
+    token: string | null;
+}) {
+    const qc = useQueryClient();
+    const [newNote, setNewNote] = useState('');
+
+    const { data: detail, isLoading } = useQuery<Segnalazione>({
+        queryKey: ['governance-segnalazione-detail', segnalazioneId],
+        queryFn: () =>
+            axios.get(`${BASE_URL}/api/admin/governance/segnalazioni/${segnalazioneId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            }).then(r => r.data),
+        enabled: !!segnalazioneId
+    });
+
+    const updateMutation = useMutation({
+        mutationFn: (payload: { stato?: Stato; note?: string }) =>
+            axios.patch(
+                `${BASE_URL}/api/admin/governance/segnalazioni/${segnalazioneId}`,
+                payload,
+                { headers: { Authorization: `Bearer ${token}` } },
+            ),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: ['governance-segnalazioni'] });
+            qc.invalidateQueries({ queryKey: ['governance-segnalazione-detail', segnalazioneId] });
+            setNewNote('');
+        },
+    });
+
+    const handleAddNote = () => {
+        if (!newNote.trim()) return;
+        updateMutation.mutate({ note: newNote });
+    };
+
+    const handleCloseReport = () => {
+        updateMutation.mutate({ stato: 'risolta' });
+    };
+
+    if (isLoading || !detail) {
+        return (
+            <div className="sgn-overlay" onClick={onClose}>
+                <div className="sgn-detail-modal" onClick={e => e.stopPropagation()}>
+                    <div className="sgn-loading">Caricamento audit esteso...</div>
+                </div>
+            </div>
+        );
+    }
+
+    const sc = STATO_CONFIG[detail.stato];
+    const pc = PRIORITA_CONFIG[detail.priorita];
+
     return (
         <div className="sgn-overlay" onClick={onClose}>
-            <div className="sgn-note-modal" onClick={e => e.stopPropagation()}>
-                <div className="sgn-note-modal-header">
-                    <div className="sgn-note-modal-title">
-                        <StickyNote size={16} />
-                        <span>Nota — {segnalazione.report_code}</span>
-                    </div>
-                    <button className="sgn-icon-btn" title="Chiudi" aria-label="Chiudi nota" onClick={onClose}><X size={18} /></button>
+            <div className="sgn-detail-modal" onClick={e => e.stopPropagation()}>
+                <div className="sgn-detail-header">
+                    <h4>Dettaglio Segnalazione #{detail.report_code} ({pc.label} Priorità)</h4>
+                    <button className="sgn-icon-btn" aria-label="Chiudi" onClick={onClose}><X size={18} /></button>
                 </div>
-                <div className="sgn-note-modal-body">
-                    <div className="sgn-note-meta">
-                        <FileText size={14} />
-                        <span>{segnalazione.document_title}</span>
-                        <span className="sgn-separator">·</span>
-                        <span>{formatDate(segnalazione.reported_at)}</span>
+
+                <div className="sgn-detail-body">
+                    {/* Info Section */}
+                    <div className="sgn-detail-info-grid">
+                        <div className="sgn-info-label">Documento:</div>
+                        <div className="sgn-info-value">{detail.document_title}</div>
+
+                        <div className="sgn-info-label">Data Segnalazione:</div>
+                        <div className="sgn-info-value">{formatDate(detail.reported_at)}</div>
+
+                        <div className="sgn-info-label">Stato:</div>
+                        <div className="sgn-info-value">
+                            <span className={`sgn-inline-badge ${sc.cls}`}>{sc.icon} {sc.label}</span>
+                        </div>
+
+                        <div className="sgn-info-label">Segnalato da:</div>
+                        <div className="sgn-info-value">{detail.created_by}</div>
                     </div>
-                    <p className="sgn-note-text">
-                        {segnalazione.note || <em className="sgn-muted">Nessuna nota disponibile.</em>}
-                    </p>
+
+                    <hr className="sgn-divider" />
+
+                    {/* Feedback Governance */}
+                    <div className="sgn-section">
+                        <h5 className="sgn-section-title">Descrizione del Problema (Feedback Governance)</h5>
+                        <div className="sgn-feedback-box">
+                            {detail.note || <em className="sgn-muted">Nessuna descrizione iniziale fornita.</em>}
+                        </div>
+                    </div>
+
+                    {/* Snapshot Reasoning AI */}
+                    <div className="sgn-section">
+                        <h5 className="sgn-section-title">Snapshot del Reasoning AI (Al momento della segnalazione)</h5>
+                        <div className="sgn-snapshot-box">
+                            <ol>
+                                <li>Ricerca Semantica: <em>(Simulata nel mockup — In attesa di integrazione pipeline)</em> (Score: 0.92)</li>
+                                <li>Estrazione Chunk: <em>Articolo di riferimento dal documento...</em></li>
+                                <li>Generazione Risposta: <em>'Risposta originale dell'AI prima della segnalazione...'</em></li>
+                            </ol>
+                        </div>
+                    </div>
+
+                    <hr className="sgn-divider" />
+
+                    {/* Timeline Audit */}
+                    <div className="sgn-section">
+                        <h5 className="sgn-section-title">Cronologia delle Azioni & Audit Trail</h5>
+                        <div className="sgn-timeline">
+                            {detail.history?.map((h, i) => {
+                                let icon = <CircleCheck size={14} className="tl-icon-create" />;
+                                let colorCls = "tl-dot-create";
+                                let text = "";
+
+                                if (h.action_type === 'created') {
+                                    text = `Segnalazione creata da ${h.created_by}`;
+                                    colorCls = "tl-dot-create";
+                                } else if (h.action_type === 'status_changed') {
+                                    icon = <Clock size={14} className="tl-icon-status" />;
+                                    colorCls = "tl-dot-status";
+                                    const stOld = h.old_value ? STATO_CONFIG[h.old_value as Stato]?.label : '';
+                                    const stNew = h.new_value ? STATO_CONFIG[h.new_value as Stato]?.label : '';
+                                    text = `Stato cambiato da ${stOld} a: ${stNew} (${h.created_by})`;
+                                } else if (h.action_type === 'note_added') {
+                                    icon = <StickyNote size={14} className="tl-icon-note" />;
+                                    colorCls = "tl-dot-note";
+                                    text = `Nota Interna aggiunta da ${h.created_by}`;
+                                } else {
+                                    icon = <Shield size={14} className="tl-icon-other" />;
+                                    colorCls = "tl-dot-other";
+                                    text = `Azione ${h.action_type} da ${h.created_by}`;
+                                }
+
+                                return (
+                                    <div className="sgn-timeline-item" key={h.id}>
+                                        <div className={`sgn-timeline-dot ${colorCls}`}>{icon}</div>
+                                        {i < detail.history!.length - 1 && <div className="sgn-timeline-line"></div>}
+                                        <div className="sgn-timeline-content">
+                                            <div className="sgn-timeline-meta">
+                                                {formatDate(h.created_at)} — {text}
+                                            </div>
+                                            {h.action_type === 'note_added' && h.new_value && (
+                                                <div className="sgn-timeline-note-body">"{h.new_value}"</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Actions Footer */}
+                <div className="sgn-detail-footer">
+                    <div className="sgn-detail-actions-left">
+                        <button className="sgn-btn sgn-btn-success" disabled>
+                            Assegna a Dual Basement
+                        </button>
+
+                        <div className="sgn-inline-note-adder">
+                            <input
+                                type="text"
+                                placeholder="Scrivi nota interna..."
+                                className="sgn-form-input sgn-inline-input"
+                                value={newNote}
+                                onChange={e => setNewNote(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && handleAddNote()}
+                            />
+                            <button
+                                className="sgn-btn sgn-btn-ghost sgn-margin-l"
+                                onClick={handleAddNote}
+                                disabled={!newNote.trim() || updateMutation.isPending}
+                            >
+                                Aggiungi Nota
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="sgn-detail-actions-right">
+                        {detail.stato !== 'risolta' && (
+                            <button className="sgn-btn sgn-btn-danger" onClick={handleCloseReport} disabled={updateMutation.isPending}>
+                                Chiudi Segnalazione
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
         </div>
@@ -216,7 +393,7 @@ const GovernanceSegnalazioniModal: React.FC<Props> = ({ onClose }) => {
     const [filterPriorita, setFilterPriorita] = useState<Priorita | ''>('');
     const [showFilter, setShowFilter] = useState(false);
     const [showNewForm, setShowNewForm] = useState(false);
-    const [viewNote, setViewNote] = useState<Segnalazione | null>(null);
+    const [viewDetailId, setViewDetailId] = useState<string | null>(null);
     const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'reported_at', dir: 'desc' });
 
     const params = new URLSearchParams({ limit: '50' });
@@ -379,7 +556,7 @@ const GovernanceSegnalazioniModal: React.FC<Props> = ({ onClose }) => {
                                         <th onClick={() => toggleSort('priorita')} className="sgn-th-sortable">
                                             Priorità <SortIcon k="priorita" />
                                         </th>
-                                        <th>Note</th>
+                                        <th>Azioni</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -414,12 +591,10 @@ const GovernanceSegnalazioniModal: React.FC<Props> = ({ onClose }) => {
                                                 <td>
                                                     <button
                                                         className="sgn-view-note-btn"
-                                                        onClick={() => setViewNote(s)}
-                                                        disabled={!s.note}
-                                                        title={s.note ? 'Visualizza nota' : 'Nessuna nota'}
+                                                        onClick={() => setViewDetailId(s.id)}
+                                                        title="Dettaglio e Audit Trail"
                                                     >
-                                                        <StickyNote size={13} />
-                                                        {s.note ? '[View Note]' : '—'}
+                                                        <FileText size={13} /> Dettaglio
                                                     </button>
                                                 </td>
                                             </tr>
@@ -450,7 +625,7 @@ const GovernanceSegnalazioniModal: React.FC<Props> = ({ onClose }) => {
             </div>
 
             {/* Sub-modals */}
-            {viewNote && <NoteModal segnalazione={viewNote} onClose={() => setViewNote(null)} />}
+            {viewDetailId && <DettaglioSegnalazioneModal token={token} segnalazioneId={viewDetailId} onClose={() => setViewDetailId(null)} />}
             {showNewForm && <NewSegnalazioneForm token={token} onClose={() => setShowNewForm(false)} />}
         </>
     );

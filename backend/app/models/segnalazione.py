@@ -19,6 +19,13 @@ class PrioritaSegnalazione(str, PyEnum):
     bassa = "bassa"
 
 
+class AzioneSegnalazione(str, PyEnum):
+    created = "created"
+    status_changed = "status_changed"
+    note_added = "note_added"
+    assigned = "assigned"
+
+
 class GovernanceSegnalazione(Base):
     __tablename__ = "governance_segnalazioni"
 
@@ -50,3 +57,37 @@ class GovernanceSegnalazione(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+
+    history = relationship(
+        "GovernanceSegnalazioneHistory",
+        back_populates="segnalazione",
+        cascade="all, delete-orphan",
+        order_by="asc(GovernanceSegnalazioneHistory.created_at)"
+    )
+
+
+class GovernanceSegnalazioneHistory(Base):
+    __tablename__ = "governance_segnalazioni_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    segnalazione_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("governance_segnalazioni.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    action_type = Column(
+        Enum(AzioneSegnalazione, name="azione_segnalazione_enum"),
+        nullable=False
+    )
+    old_value = Column(String, nullable=True)
+    new_value = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_by_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
+    segnalazione = relationship("GovernanceSegnalazione", back_populates="history")
+    created_by = relationship("User", foreign_keys=[created_by_id])

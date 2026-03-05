@@ -6,7 +6,7 @@ import asyncio
 import asyncpg
 from passlib.context import CryptContext
 
-DB_DSN = "postgresql://postgres:postgres@db:5432/documentale"
+DB_DSN = "postgresql://postgres:postgres@127.0.0.1:5433/documentale"
 EMAIL = "admin@example.com"
 NEW_PASSWORD = "Admin123!"
 

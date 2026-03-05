@@ -92,7 +92,7 @@ const SidebarFilters: React.FC<SidebarFiltersProps> = ({
     };
 
     return (
-        <aside className="sidebar-filters">
+        <aside className="sidebar-filters" data-testid="filter-panel">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <Filter size={20} color="var(--accent)" />

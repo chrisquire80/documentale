@@ -50,9 +50,27 @@ class DocumentUpdate(BaseModel):
     is_restricted: Optional[bool] = None
     doc_metadata: Optional[Dict[str, Any]] = None
 
+class TagResponse(BaseModel):
+    id: UUID
+    name: str
+
+    class Config:
+        from_attributes = True
+
+class DocumentVersionTagResponse(BaseModel):
+    is_ai_generated: bool
+    tag: TagResponse
+
+    class Config:
+        from_attributes = True
+
 class DocumentVersionResponse(BaseModel):
+    id: UUID
     version_num: int
     created_at: datetime
+    ai_status: str
+    ai_summary: Optional[str] = None
+    tags: List[DocumentVersionTagResponse] = []
 
     class Config:
         from_attributes = True
@@ -60,13 +78,18 @@ class DocumentVersionResponse(BaseModel):
 class DocumentResponse(DocumentBase):
     id: UUID
     file_type: Optional[str] = None
-    current_version: int
+    department: Optional[str] = None
+    status: str
+    current_version_id: Optional[UUID] = None
     owner_id: UUID
     is_deleted: bool = False
     created_at: datetime
     deleted_at: Optional[datetime] = None
     highlight_snippet: Optional[str] = None
     is_indexed: bool = False  # True se l'embedding AI è già stato generato
+    relevance_score: Optional[float] = None
+    
+    versions: List[DocumentVersionResponse] = []
 
     class Config:
         from_attributes = True

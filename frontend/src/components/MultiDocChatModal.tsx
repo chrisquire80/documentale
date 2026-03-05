@@ -82,8 +82,11 @@ const MultiDocChatModal: React.FC<MultiDocChatModalProps> = ({
                 sources: res.data.sources,
                 reasoning_steps: res.data.reasoning_steps,
             }]);
-        } catch (err: any) {
-            const detail = err.response?.data?.detail || 'Errore di connessione';
+        } catch (err: unknown) {
+            let detail = 'Errore di connessione';
+            if (axios.isAxiosError(err)) {
+                detail = err.response?.data?.detail || detail;
+            }
             setMessages(prev => [...prev, {
                 id: (Date.now() + 1).toString(),
                 role: 'assistant',
@@ -120,7 +123,7 @@ const MultiDocChatModal: React.FC<MultiDocChatModalProps> = ({
     if (!isOpen) return null;
 
     return (
-        <div className="modal-overlay" onClick={onClose} style={{ zIndex: 1100 }}>
+        <div className="modal-overlay chat-modal-overlay" onClick={onClose}>
             <div
                 className="modal-content multi-doc-chat-modal"
                 onClick={e => e.stopPropagation()}
@@ -158,14 +161,14 @@ const MultiDocChatModal: React.FC<MultiDocChatModalProps> = ({
 
                 {/* Messages */}
                 <div className="multi-doc-chat-messages">
-                    {messages.map(msg => (
+                    {messages.map((msg: Message) => (
                         <div key={msg.id} className={`chat-msg-row ${msg.role}`}>
                             <div className={`chat-bubble ${msg.role}`}>
                                 {msg.reasoning_steps && msg.reasoning_steps.length > 0 && (
                                     <details className="chat-reasoning">
                                         <summary className="chat-reasoning-summary">🔍 Come ho trovato questa risposta</summary>
                                         <ol className="chat-reasoning-steps">
-                                            {msg.reasoning_steps.map((step, i) => (
+                                            {msg.reasoning_steps.map((step: string, i: number) => (
                                                 <li key={i}>{step}</li>
                                             ))}
                                         </ol>
@@ -176,7 +179,7 @@ const MultiDocChatModal: React.FC<MultiDocChatModalProps> = ({
                                     <div className="chat-sources">
                                         <p className="chat-sources-label">Fonti:</p>
                                         <div className="chat-sources-list">
-                                            {msg.sources.map((src, idx) => (
+                                            {msg.sources.map((src: ChatSource, idx: number) => (
                                                 <div key={idx} className="chat-source-item">
                                                     <span className="chat-source-title">{src.title}</span>
                                                     {src.page_number && (
@@ -212,7 +215,7 @@ const MultiDocChatModal: React.FC<MultiDocChatModalProps> = ({
                             placeholder="Chiedi qualcosa a tutti i documenti selezionati..."
                             disabled={isLoading}
                         />
-                        <button type="submit" disabled={!input.trim() || isLoading} className="chat-send-btn">
+                        <button type="submit" disabled={!input.trim() || isLoading} className="chat-send-btn" title="Invia messaggio">
                             <Send size={16} />
                         </button>
                     </form>

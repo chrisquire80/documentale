@@ -1,16 +1,36 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { Shield, Users, Activity, UserPlus, Power, CheckCircle, XCircle, Download } from 'lucide-react';
+import { Shield, Users, Activity, UserPlus, Power, CheckCircle, XCircle, Download, BarChart3 } from 'lucide-react';
 import { useAuth } from '../store/AuthContext';
 import Pagination from '../components/Pagination';
+import UserCreationModal from '../components/UserCreationModal';
+import AdminStatsTab from '../components/AdminStatsTab';
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:8000';
+
+interface AdminUser {
+    id: string;
+    email: string;
+    role: string;
+    department?: string;
+    is_active: boolean;
+    created_at: string;
+}
+
+interface AuditLogEntry {
+    id: string;
+    timestamp: string;
+    action: string;
+    user_id?: string;
+    details?: string;
+}
 
 const AdminPage: React.FC = () => {
     const { currentUser } = useAuth();
     const queryClient = useQueryClient();
     const [activeTab, setActiveTab] = useState<'users' | 'audit' | 'stats'>('users');
+    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
     // Paginazione Users
     const [userPage, setUserPage] = useState(1);
@@ -87,7 +107,7 @@ const AdminPage: React.FC = () => {
         }
     };
 
-    // @ts-ignore - Ignore type error if typing is strict on UserRole
+    // @ts-expect-error - Ignore type error if typing is strict on UserRole
     if (currentUser?.role !== 'ADMIN') {
         return (
             <div style={{ padding: '2rem', textAlign: 'center' }}>
@@ -139,6 +159,17 @@ const AdminPage: React.FC = () => {
                     >
                         <Activity size={18} /> Audit Log
                     </button>
+                    <button
+                        onClick={() => setActiveTab('stats')}
+                        style={{
+                            background: 'none', border: 'none', padding: '1rem', cursor: 'pointer',
+                            color: activeTab === 'stats' ? 'var(--accent)' : 'var(--text-muted)',
+                            borderBottom: activeTab === 'stats' ? '2px solid var(--accent)' : '2px solid transparent',
+                            display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1rem'
+                        }}
+                    >
+                        <BarChart3 size={18} /> Statistiche
+                    </button>
                 </div>
 
                 {/* Content: Utenti */}
@@ -148,8 +179,11 @@ const AdminPage: React.FC = () => {
                             <h2 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                 <Users size={20} /> Gestione Utenti
                             </h2>
-                            {/* TODO: Modale Creazione Utente */}
-                            <button className="btn" style={{ width: 'auto', padding: '0.5rem 1rem' }}>
+                            <button
+                                className="btn"
+                                style={{ width: 'auto', padding: '0.5rem 1rem' }}
+                                onClick={() => setIsCreateModalOpen(true)}
+                            >
                                 <UserPlus size={16} style={{ marginRight: '0.5rem' }} /> Nuovo Utente
                             </button>
                         </div>
@@ -170,7 +204,7 @@ const AdminPage: React.FC = () => {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {usersData?.items?.map((user: any) => (
+                                            {usersData?.items?.map((user: AdminUser) => (
                                                 <tr key={user.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                                                     <td style={{ padding: '1rem 0' }}>{user.email}</td>
                                                     <td style={{ padding: '1rem 0' }}>
@@ -253,7 +287,7 @@ const AdminPage: React.FC = () => {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {auditData?.items?.map((log: any) => (
+                                            {auditData?.items?.map((log: AuditLogEntry) => (
                                                 <tr key={log.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                                                     <td style={{ padding: '0.75rem 0', color: 'var(--text-muted)' }}>
                                                         {new Date(log.timestamp).toLocaleString('it-IT')}
@@ -285,7 +319,22 @@ const AdminPage: React.FC = () => {
                         )}
                     </div>
                 )}
+
+                {/* Content: Statistiche */}
+                {activeTab === 'stats' && (
+                    <AdminStatsTab />
+                )}
             </main>
+
+            {isCreateModalOpen && (
+                <UserCreationModal
+                    onClose={() => setIsCreateModalOpen(false)}
+                    onSuccess={() => {
+                        setIsCreateModalOpen(false);
+                        queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+                    }}
+                />
+            )}
         </div>
     );
 };

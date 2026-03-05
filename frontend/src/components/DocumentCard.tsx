@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2, Bot } from 'lucide-react';
+import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2, Bot, Sparkles } from 'lucide-react';
 import DocumentPreviewModal from './DocumentPreviewModal';
 import EditMetadataModal from './EditMetadataModal';
 import DocumentVersionModal from './DocumentVersionModal';
@@ -51,6 +51,32 @@ const DocumentCard: React.FC<{
         mutationFn: (docId: string) => {
             const token = localStorage.getItem('token');
             return axios.delete(`${BASE_URL}/api/documents/${docId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['documents'] });
+            if (onUpdate) onUpdate();
+        }
+    });
+
+    const approveTagMutation = useMutation({
+        mutationFn: ({ versionId, tagId }: { versionId: string, tagId: string }) => {
+            const token = localStorage.getItem('token');
+            return axios.post(`${BASE_URL}/api/documents/${doc.id}/versions/${versionId}/tags/${tagId}/approve`, {}, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['documents'] });
+            if (onUpdate) onUpdate();
+        }
+    });
+
+    const rejectTagMutation = useMutation({
+        mutationFn: ({ versionId, tagId }: { versionId: string, tagId: string }) => {
+            const token = localStorage.getItem('token');
+            return axios.delete(`${BASE_URL}/api/documents/${doc.id}/versions/${versionId}/tags/${tagId}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
         },
@@ -126,9 +152,17 @@ const DocumentCard: React.FC<{
                     flex: 1,
                     minWidth: '150px',
                     wordBreak: 'break-word',
-                    color: 'var(--text-main)'
+                    color: 'var(--text-main)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
                 }}>
                     {doc.title}
+                    {doc.relevance_score != null && (
+                        <span className="relevance-badge" style={{ fontSize: '0.7rem', color: '#10b981', background: 'rgba(16, 185, 129, 0.15)', padding: '2px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
+                            {doc.relevance_score}% Match
+                        </span>
+                    )}
                 </h3>
                 {doc.doc_metadata?.summary && (
                     <div className="hover-preview-tooltip">{doc.doc_metadata.summary}</div>
@@ -237,12 +271,54 @@ const DocumentCard: React.FC<{
             )}
 
             <div style={{ marginTop: '1rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                {/* Legacy Metadata Tags */}
                 {doc.doc_metadata?.tags?.map((tag: string) => (
                     <span
                         key={tag}
                         style={{ background: 'var(--primary)', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.75rem' }}
                     >
                         {tag}
+                    </span>
+                ))}
+
+                {/* Wave 6: Relational Tags (from newest version) */}
+                {doc.versions && doc.versions.length > 0 && doc.versions[0].tags?.map((t: any) => (
+                    <span
+                        key={t.tag.id}
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem',
+                            background: t.is_ai_generated ? 'rgba(56, 189, 248, 0.1)' : 'var(--primary)',
+                            border: t.is_ai_generated ? '1px dashed #38bdf8' : '1px solid transparent',
+                            color: t.is_ai_generated ? '#38bdf8' : 'var(--text-main)',
+                            padding: '0.15rem 0.4rem',
+                            borderRadius: '0.25rem',
+                            fontSize: '0.75rem'
+                        }}
+                        title={t.is_ai_generated ? "Tag suggerito dall'AI" : "Tag confermato"}
+                    >
+                        {t.is_ai_generated && <Sparkles size={12} />}
+                        {t.tag.name}
+
+                        {t.is_ai_generated && canEdit && (
+                            <div style={{ display: 'flex', gap: '2px', marginLeft: '4px' }}>
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); approveTagMutation.mutate({ versionId: doc.versions[0].id, tagId: t.tag.id }); }}
+                                    title="Approva tag"
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#10b981', padding: '0' }}
+                                >
+                                    ✓
+                                </button>
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); rejectTagMutation.mutate({ versionId: doc.versions[0].id, tagId: t.tag.id }); }}
+                                    title="Rifiuta tag"
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '0' }}
+                                >
+                                    ×
+                                </button>
+                            </div>
+                        )}
                     </span>
                 ))}
             </div>

@@ -85,8 +85,15 @@ const DocumentRow: React.FC<{
 
                 {/* Title + AI badge */}
                 <div className="doc-row-title">
-                    <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                        <span className="doc-row-name" title={doc.title}>{doc.title}</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', gap: '4px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span className="doc-row-name" title={doc.title}>{doc.title}</span>
+                            {doc.relevance_score != null && (
+                                <span className="relevance-badge" style={{ fontSize: '0.7rem', color: '#10b981', background: 'rgba(16, 185, 129, 0.15)', padding: '2px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
+                                    {doc.relevance_score}% Match
+                                </span>
+                            )}
+                        </div>
                         {doc.highlight_snippet && (
                             <div
                                 className="doc-row-snippet"

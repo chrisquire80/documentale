@@ -62,8 +62,19 @@ const BulkUploadModal: React.FC<{ onClose: () => void, onSuccess: () => void }> 
                 successCount++;
             } catch (err: any) {
                 console.error(`Upload failed for ${file.name}`, err);
-                const apiError = err.response?.data?.detail || 'Errore sconosciuto';
-                currentErrorMessages.push(`Impossibile caricare ${file.name}: ${apiError}`);
+                let errorMessage = 'Errore sconosciuto';
+
+                if (err.response) {
+                    // Errore dal server (4xx, 5xx)
+                    errorMessage = err.response.data?.detail || `Errore server (${err.response.status})`;
+                } else if (err.request) {
+                    // Richiesta inviata ma nessuna risposta (problema di rete)
+                    errorMessage = 'Nessuna risposta dal server (Network Error)';
+                } else {
+                    errorMessage = err.message;
+                }
+
+                currentErrorMessages.push(`Impossibile caricare "${file.name}": ${errorMessage}`);
             }
 
             setUploadProgress(prev => ({ ...prev, current: prev.current + 1 }));

@@ -146,6 +146,50 @@ async def _run_ocr_background(
             await db.execute(stmt)
 
             if ai_metadata or entity_patch:
+                # 1. Update Document department
+                doc_stmt = select(Document).where(Document.id == doc_id)
+                doc = (await db.execute(doc_stmt)).scalar_one_or_none()
+                if doc:
+                    if not doc.department and ai_metadata and ai_metadata.get("department") and ai_metadata["department"] != "Generale":
+                        doc.department = ai_metadata["department"]
+                    
+                    # 2. Update DocumentVersion AI Summary & Status
+                    if doc.current_version_id:
+                        from ..models.document import DocumentVersion, Tag, DocumentVersionTag
+                        ver_stmt = select(DocumentVersion).where(DocumentVersion.id == doc.current_version_id)
+                        ver = (await db.execute(ver_stmt)).scalar_one_or_none()
+                        if ver:
+                            ver.ai_status = "ready"
+                            if ai_metadata and ai_metadata.get("summary"):
+                                ver.ai_summary = ai_metadata["summary"]
+                            
+                            # 3. Add auto-tags into DocumentVersionTag
+                            if ai_metadata and ai_metadata.get("tags"):
+                                for tag_name in ai_metadata["tags"]:
+                                    tag_name_clean = str(tag_name).strip().lower()
+                                    if not tag_name_clean: continue
+                                    
+                                    # Find or create Tag
+                                    tag_q = select(Tag).where(Tag.name == tag_name_clean)
+                                    existing_tag = (await db.execute(tag_q)).scalar_one_or_none()
+                                    if not existing_tag:
+                                        existing_tag = Tag(name=tag_name_clean)
+                                        db.add(existing_tag)
+                                        await db.flush()
+                                        
+                                    # Check if link exists
+                                    link_q = select(DocumentVersionTag).where(
+                                        DocumentVersionTag.document_version_id == ver.id,
+                                        DocumentVersionTag.tag_id == existing_tag.id
+                                    )
+                                    if not (await db.execute(link_q)).scalar_one_or_none():
+                                        db.add(DocumentVersionTag(
+                                            document_version_id=ver.id,
+                                            tag_id=existing_tag.id,
+                                            is_ai_generated=True
+                                        ))
+
+                # Update structured legacy metadata block
                 meta_stmt = select(DocumentMetadata).where(DocumentMetadata.document_id == doc_id)
                 meta = (await db.execute(meta_stmt)).scalar_one_or_none()
                 if meta:
@@ -233,11 +277,17 @@ async def upload_document(
         owner_id=current_user.id,
         is_restricted=is_restricted,
         file_type=file.content_type,
+        department=current_user.department,
     )
     db.add(doc)
     await db.flush()
 
-    db.add(DocumentVersion(document_id=doc.id, version_num=1, file_path=file_rel_path))
+    ver = DocumentVersion(document_id=doc.id, version_num=1, file_path=file_rel_path, ai_status="processing")
+    db.add(ver)
+    await db.flush()
+    
+    doc.current_version_id = ver.id
+
     db.add(DocumentMetadata(document_id=doc.id, metadata_json=metadata_data))
 
     tags_text = " ".join(metadata_data.get("tags", []))
@@ -245,17 +295,36 @@ async def upload_document(
     dept_text = metadata_data.get("dept", "")
     initial_corpus = " ".join(filter(None, [title, author_text, dept_text, tags_text]))
     db.add(DocumentContent(document_id=doc.id, fulltext_content=initial_corpus))
-    db.add(AuditLog(user_id=current_user.id, action="UPLOAD", target_id=doc.id))
+    
+    from ..models.audit import AuditLog
+    db.add(AuditLog(user_id=current_user.id, action="UPLOAD", target_id=doc.id, document_version_id=ver.id))
 
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("Commit fallito per caricamento documento %s", title)
+        raise HTTPException(status_code=500, detail=f"Errore salvataggio database: {str(exc)}")
 
     background_tasks.add_task(
         _run_ocr_background, doc.id, file_rel_path, file.content_type, initial_corpus
     )
     await _invalidate_user_cache(redis, current_user.id)
 
-    await db.refresh(doc, ["metadata_entries", "owner"])
-    return doc
+    # Re-fetch with selectinload to avoid MissingGreenlet in schemas/responses
+    # DocumentResponse/doc_metadata depends on metadata_entries, owner, content, and versions
+    stmt = (
+        select(Document)
+        .options(
+            selectinload(Document.metadata_entries),
+            selectinload(Document.owner),
+            selectinload(Document.content),
+            selectinload(Document.versions)
+        )
+        .where(Document.id == doc.id)
+    )
+    doc_final = (await db.execute(stmt)).scalar_one()
+    return doc_final
 
 
 # ── Nuova Versione ────────────────────────────────────────────────────────────
@@ -272,7 +341,7 @@ async def upload_document_version(
     storage: StorageLayer = Depends(get_storage),
     redis=Depends(get_redis),
 ):
-    stmt = select(Document).options(selectinload(Document.metadata_entries)).where(Document.id == doc_id, Document.deleted_at.is_(None))
+    stmt = select(Document).options(selectinload(Document.metadata_entries)).where(Document.id == doc_id, Document.is_deleted == False)
     doc = (await db.execute(stmt)).scalar_one_or_none()
 
     if not doc:
@@ -330,8 +399,20 @@ async def upload_document_version(
         _run_ocr_background, doc.id, file_rel_path, file.content_type, initial_corpus
     )
     await _invalidate_user_cache(redis, current_user.id)
-    await db.refresh(doc, ["metadata_entries", "owner"])
-    return doc
+    
+    # Re-fetch with all relationships
+    stmt = (
+        select(Document)
+        .options(
+            selectinload(Document.metadata_entries),
+            selectinload(Document.owner),
+            selectinload(Document.content),
+            selectinload(Document.versions)
+        )
+        .where(Document.id == doc.id)
+    )
+    doc_final = (await db.execute(stmt)).scalar_one()
+    return doc_final
 
 
 # ── Update ────────────────────────────────────────────────────────────────────
@@ -345,7 +426,7 @@ async def update_document(
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
 ):
-    stmt = select(Document).options(selectinload(Document.metadata_entries)).where(Document.id == doc_id, Document.deleted_at.is_(None))
+    stmt = select(Document).options(selectinload(Document.metadata_entries)).where(Document.id == doc_id, Document.is_deleted == False)
     doc = (await db.execute(stmt)).scalar_one_or_none()
 
     if not doc:
@@ -407,17 +488,29 @@ async def update_document(
     db.add(audit)
 
     await db.commit()
-    await db.refresh(doc, ["metadata_entries", "owner"])
+
+    # Re-fetch with all relationships to avoid MissingGreenlet in schemas/responses
+    stmt = (
+        select(Document)
+        .options(
+            selectinload(Document.metadata_entries),
+            selectinload(Document.owner),
+            selectinload(Document.content),
+            selectinload(Document.versions)
+        )
+        .where(Document.id == doc.id)
+    )
+    doc_final = (await db.execute(stmt)).scalar_one()
 
     # Notifica modifica se eseguita da un altro utente diverso dal proprietario
-    if doc.owner_id != current_user.id:
+    if doc_final.owner_id != current_user.id:
         await manager.send_personal_message(
             {
                 "type": "DOC_MODIFIED",
-                "message": f"Il documento '{doc.title}' e' stato aggiornato da {current_user.email}.",
-                "doc_id": str(doc.id)
+                "message": f"Il documento '{doc_final.title}' e' stato aggiornato da {current_user.email}.",
+                "doc_id": str(doc_final.id)
             },
-            doc.owner_id
+            doc_final.owner_id
         )
 
     # Invalidate search cache
@@ -428,7 +521,7 @@ async def update_document(
         except Exception:
             pass
 
-    return doc
+    return doc_final
 
 
 # ── Search ────────────────────────────────────────────────────────────────────
@@ -465,7 +558,7 @@ async def search_documents(
         except Exception:
             pass
 
-    filters = [Document.deleted_at.is_(None)]
+    filters = [Document.is_deleted == False]
     need_content_join = False
     need_meta_join = False
 
@@ -544,6 +637,7 @@ async def search_documents(
 
     # Definiamo cosa estrarre. Di base estraiamo solo l'oggetto Document
     query_cols = [Document]
+    order_by_col = Document.created_at.desc()
     
     # Ordina per rilevanza semantica se c'è una query
     if query:
@@ -555,32 +649,26 @@ async def search_documents(
             'StartSel=<mark>, StopSel=</mark>, MaxWords=35, MinWords=15'
         )
         query_cols.append(ts_headline_expr.label('snippet'))
-        
-        stmt = select(*query_cols).options(
-            selectinload(Document.metadata_entries), selectinload(Document.owner)
-        )
-        if need_content_join:
-            stmt = stmt.outerjoin(Document.content)
-        if need_meta_join:
-            stmt = stmt.outerjoin(Document.metadata_entries)
-        if filters:
-            stmt = stmt.where(*filters)
             
         if 'query_emb' in locals() and query_emb:
-            stmt = stmt.order_by(DocumentContent.embedding.cosine_distance(cast(query_emb, Vector)))
+            dist_expr = DocumentContent.embedding.cosine_distance(cast(query_emb, Vector))
+            query_cols.append(dist_expr.label('distance'))
+            order_by_col = dist_expr.asc()
         else:
-            stmt = stmt.order_by(Document.created_at.desc())
-    else:
-        stmt = select(*query_cols).options(
-            selectinload(Document.metadata_entries), selectinload(Document.owner)
-        ).order_by(Document.created_at.desc())
-        
-        if need_content_join:
-            stmt = stmt.outerjoin(Document.content)
-        if need_meta_join:
-            stmt = stmt.outerjoin(Document.metadata_entries)
-        if filters:
-            stmt = stmt.where(*filters)
+            order_by_col = Document.created_at.desc()
+
+    stmt = select(*query_cols).options(
+        selectinload(Document.metadata_entries),
+        selectinload(Document.owner),
+        selectinload(Document.content)
+    ).order_by(order_by_col)
+    
+    if need_content_join:
+        stmt = stmt.outerjoin(Document.content)
+    if need_meta_join:
+        stmt = stmt.outerjoin(Document.metadata_entries)
+    if filters:
+        stmt = stmt.where(*filters)
 
     stmt = stmt.offset(offset).limit(limit)
 
@@ -603,15 +691,31 @@ async def search_documents(
     parsed_items = []
     for row in results:
         doc_obj = row[0]
-        snippet = row.snippet if len(row) > 1 and row.snippet else None
+        snippet = getattr(row, 'snippet', None)
+        distance = getattr(row, 'distance', None)
         
         # Fallback snippet if ts_headline failed (common in semantic-only matches)
         if not snippet and doc_obj.content:
             text = doc_obj.content.fulltext_content or ""
-            snippet = text[:200] + ("..." if len(text) > 200 else "")
+            # Simple keyword match for fallback snippet
+            idx = text.lower().find((query or "").lower())
+            if idx != -1:
+                start = max(0, idx - 50)
+                snippet = "..." + text[start:start+200] + "..."
+            else:
+                snippet = text[:200] + ("..." if len(text) > 200 else "")
+
+        # Relevance Score Calculate
+        relevance_score = None
+        if distance is not None:
+            # Cosine distance typically between 0 (identical) and 2 (opposite).
+            # We map 0 -> 100%, 1.0 -> 0%
+            score = max(0.0, min(100.0, (1.0 - distance) * 100.0))
+            relevance_score = round(score, 1)
 
         setattr(doc_obj, 'highlight_snippet', snippet)
         setattr(doc_obj, 'is_indexed', doc_obj.id in indexed_ids)
+        setattr(doc_obj, 'relevance_score', relevance_score)
         parsed_items.append(DocumentResponse.model_validate(doc_obj))
 
     response = PaginatedDocuments(
@@ -650,7 +754,7 @@ async def get_related_documents(
         
     filters = [
         Document.id != doc_id,
-        Document.deleted_at.is_(None)
+        Document.is_deleted == False
     ]
     
     # RBAC filtering
@@ -672,7 +776,12 @@ async def get_related_documents(
     stmt = (
         select(Document)
         .join(DocumentContent)
-        .options(selectinload(Document.metadata_entries), selectinload(Document.owner))
+        .options(
+            selectinload(Document.metadata_entries),
+            selectinload(Document.owner),
+            selectinload(Document.content),
+            selectinload(Document.versions)
+        )
         .where(
             *filters,
             DocumentContent.embedding.cosine_distance(source_content.embedding) < 0.65
@@ -697,9 +806,12 @@ async def export_bulk_documents(
     if not request.document_ids:
         raise HTTPException(status_code=400, detail="No document IDs provided")
 
-    stmt = select(Document).options(selectinload(Document.owner)).where(
+    stmt = select(Document).options(
+        selectinload(Document.owner),
+        selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
+    ).where(
         Document.id.in_(request.document_ids),
-        Document.deleted_at.is_(None)
+        Document.is_deleted == False
     )
     docs = (await db.execute(stmt)).scalars().all()
 
@@ -950,9 +1062,9 @@ async def get_documents_stats(
 ):
     if current_user.role != UserRole.ADMIN:
         # Se non è admin, torna le statistiche solo dei suoi documenti o vuoto
-        filters = [Document.deleted_at.is_(None), Document.owner_id == current_user.id]
+        filters = [Document.is_deleted == False, Document.owner_id == current_user.id]
     else:
-        filters = [Document.deleted_at.is_(None)]
+        filters = [Document.is_deleted == False]
         
     # Totale documenti attivi
     total_docs_stmt = select(func.count(distinct(Document.id))).where(*filters)
@@ -994,16 +1106,18 @@ async def get_trash(
 ):
     if current_user.role != UserRole.ADMIN:
         # User only sees their own deleted items
-        filters = [Document.deleted_at.isnot(None), Document.owner_id == current_user.id]
+        filters = [Document.is_deleted == True, Document.owner_id == current_user.id]
     else:
-        filters = [Document.deleted_at.isnot(None)]
+        filters = [Document.is_deleted == True]
 
     count_stmt = select(func.count(distinct(Document.id))).select_from(Document).where(*filters)
     total: int = (await db.execute(count_stmt)).scalar() or 0
 
     stmt = select(Document).options(
         selectinload(Document.metadata_entries),
-        selectinload(Document.owner)
+        selectinload(Document.owner),
+        selectinload(Document.content),
+        selectinload(Document.versions)
     ).where(*filters).order_by(Document.deleted_at.desc()).offset(offset).limit(limit)
 
     documents = list((await db.execute(stmt)).scalars().unique().all())
@@ -1022,7 +1136,7 @@ async def soft_delete_document(
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis)
 ):
-    stmt = select(Document).where(Document.id == doc_id, Document.deleted_at.is_(None))
+    stmt = select(Document).where(Document.id == doc_id, Document.is_deleted == False)
     doc = (await db.execute(stmt)).scalar_one_or_none()
     
     if not doc:
@@ -1031,12 +1145,86 @@ async def soft_delete_document(
     if current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Permission denied")
         
+    doc.is_deleted = True
     doc.deleted_at = func.now()
     
     audit = AuditLog(user_id=current_user.id, action="SOFT_DELETE", target_id=doc.id)
     db.add(audit)
     
     await db.commit()
+
+# ── Tags ──────────────────────────────────────────────────────────────────────
+
+@router.post("/{doc_id}/versions/{version_id}/tags/{tag_id}/approve")
+async def approve_document_tag(
+    doc_id: UUID,
+    version_id: UUID,
+    tag_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    from ..models.document import Document, DocumentVersionTag
+    
+    # Check permissions
+    doc_stmt = select(Document).where(Document.id == doc_id, Document.is_deleted == False)
+    doc = (await db.execute(doc_stmt)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+        
+    tag_stmt = select(DocumentVersionTag).where(
+        DocumentVersionTag.document_version_id == version_id,
+        DocumentVersionTag.tag_id == tag_id
+    )
+    doc_tag = (await db.execute(tag_stmt)).scalar_one_or_none()
+    
+    if not doc_tag:
+        raise HTTPException(status_code=404, detail="Tag not found on this version")
+        
+    # Approving means it's no longer considered "AI generated" (suggested)
+    doc_tag.is_ai_generated = False
+    
+    from ..models.audit import AuditLog
+    db.add(AuditLog(user_id=current_user.id, action="APPROVE_TAG", target_id=doc_id, document_version_id=version_id))
+    
+    await db.commit()
+    return {"message": "Tag approved successfully"}
+
+@router.delete("/{doc_id}/versions/{version_id}/tags/{tag_id}")
+async def delete_document_tag(
+    doc_id: UUID,
+    version_id: UUID,
+    tag_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    from ..models.document import Document, DocumentVersionTag
+    
+    # Check permissions
+    doc_stmt = select(Document).where(Document.id == doc_id, Document.is_deleted == False)
+    doc = (await db.execute(doc_stmt)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+        
+    tag_stmt = select(DocumentVersionTag).where(
+        DocumentVersionTag.document_version_id == version_id,
+        DocumentVersionTag.tag_id == tag_id
+    )
+    doc_tag = (await db.execute(tag_stmt)).scalar_one_or_none()
+    
+    if not doc_tag:
+        raise HTTPException(status_code=404, detail="Tag not found on this version")
+        
+    await db.delete(doc_tag)
+    
+    from ..models.audit import AuditLog
+    db.add(AuditLog(user_id=current_user.id, action="REJECT_DELETE_TAG", target_id=doc_id, document_version_id=version_id))
+    
+    await db.commit()
+    return {"message": "Tag removed successfully"}
     
     if redis:
         try:
@@ -1054,7 +1242,12 @@ async def restore_document(
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis)
 ):
-    stmt = select(Document).options(selectinload(Document.metadata_entries), selectinload(Document.owner)).where(Document.id == doc_id, Document.deleted_at.isnot(None))
+    stmt = select(Document).options(
+        selectinload(Document.metadata_entries),
+        selectinload(Document.owner),
+        selectinload(Document.content),
+        selectinload(Document.versions)
+    ).where(Document.id == doc_id, Document.is_deleted == True)
     doc = (await db.execute(stmt)).scalar_one_or_none()
     
     if not doc:
@@ -1063,6 +1256,7 @@ async def restore_document(
     if current_user.role != UserRole.ADMIN and doc.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Permission denied")
         
+    doc.is_deleted = False
     doc.deleted_at = None
     
     audit = AuditLog(user_id=current_user.id, action="RESTORE", target_id=doc.id)
@@ -1088,7 +1282,7 @@ async def hard_delete_document(
     storage: StorageLayer = Depends(get_storage),
     redis=Depends(get_redis)
 ):
-    stmt = select(Document).options(selectinload(Document.versions)).where(Document.id == doc_id, Document.deleted_at.isnot(None))
+    stmt = select(Document).options(selectinload(Document.versions)).where(Document.id == doc_id, Document.is_deleted == True)
     doc = (await db.execute(stmt)).scalar_one_or_none()
     
     if not doc:
@@ -1128,7 +1322,7 @@ async def bulk_delete_documents(
     # Selection documents not already deleted
     stmt = select(Document).where(
         Document.id.in_(request.document_ids),
-        Document.deleted_at.is_(None)
+        Document.is_deleted == False
     )
     docs = (await db.execute(stmt)).scalars().all()
 
@@ -1139,6 +1333,7 @@ async def bulk_delete_documents(
     for doc in docs:
         # Permission check: owner or ADMIN
         if current_user.role == UserRole.ADMIN or doc.owner_id == current_user.id:
+            doc.is_deleted = True
             doc.deleted_at = func.now()
             db.add(AuditLog(user_id=current_user.id, action="SOFT_DELETE_BULK", target_id=doc.id))
             deleted_count += 1

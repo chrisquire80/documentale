@@ -576,6 +576,16 @@ async def create_segnalazione(
     await db.commit()
     await db.refresh(segnalazione)
 
+    # Crea log in history
+    from ..models.segnalazione import GovernanceSegnalazioneHistory, AzioneSegnalazione
+    history_entry = GovernanceSegnalazioneHistory(
+        segnalazione_id=segnalazione.id,
+        action_type=AzioneSegnalazione.created,
+        created_by_id=current_user.id
+    )
+    db.add(history_entry)
+    await db.commit()
+
     return {
         "message": "Segnalazione creata con successo",
         "id": str(segnalazione.id),
@@ -600,10 +610,92 @@ async def update_segnalazione(
     if not segnalazione:
         raise HTTPException(status_code=404, detail="Segnalazione non trovata")
 
-    if payload.stato is not None:
+    from ..models.segnalazione import GovernanceSegnalazioneHistory, AzioneSegnalazione
+
+    # Traccia modifiche per history
+    if payload.stato is not None and payload.stato != segnalazione.stato:
+        old_stato = segnalazione.stato.value
+        new_stato = payload.stato.value
         segnalazione.stato = payload.stato
-    if payload.note is not None:
+        
+        history_entry = GovernanceSegnalazioneHistory(
+            segnalazione_id=segnalazione.id,
+            action_type=AzioneSegnalazione.status_changed,
+            old_value=old_stato,
+            new_value=new_stato,
+            created_by_id=current_user.id
+        )
+        db.add(history_entry)
+
+    if payload.note is not None and payload.note.strip():
+        # Aggiungere nota è trattato come evento a sé stante
+        # Nota: in un'implementazione più complessa 'note' potrebbe diventare una tabella separata o aggiungersi alla history in `new_value`
+        # Qui salviamo l'intera stringa in new_value o la sovrascriviamo in segnalazione.note
         segnalazione.note = payload.note
+        
+        history_entry = GovernanceSegnalazioneHistory(
+            segnalazione_id=segnalazione.id,
+            action_type=AzioneSegnalazione.note_added,
+            new_value=payload.note,
+            created_by_id=current_user.id
+        )
+        db.add(history_entry)
 
     await db.commit()
     return {"message": "Segnalazione aggiornata con successo"}
+
+@router.get("/governance/segnalazioni/{segnalazione_id}")
+async def get_segnalazione_audit_trail(
+    segnalazione_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ottieni il dettaglio di una singola segnalazione con tutta la sua history."""
+    _require_admin(current_user)
+    
+    from sqlalchemy.orm import selectinload
+    stmt = (
+        select(GovernanceSegnalazione)
+        .options(selectinload(GovernanceSegnalazione.history))
+        .where(GovernanceSegnalazione.id == segnalazione_id)
+    )
+    segnalazione = (await db.execute(stmt)).scalar_one_or_none()
+    
+    if not segnalazione:
+        raise HTTPException(status_code=404, detail="Segnalazione non trovata")
+        
+    # Get user info for history
+    from ..models.user import User as DBUser
+    
+    history_res = []
+    for h in segnalazione.history:
+        # Resolve username
+        user_stmt = select(DBUser).where(DBUser.id == h.created_by_id)
+        u: DBUser = (await db.execute(user_stmt)).scalar_one_or_none()
+        username = u.email if u else "Sconosciuto"
+        
+        history_res.append({
+            "id": str(h.id),
+            "action_type": h.action_type.value,
+            "old_value": h.old_value,
+            "new_value": h.new_value,
+            "created_at": h.created_at,
+            "created_by": username
+        })
+        
+    user_stmt_main = select(DBUser).where(DBUser.id == segnalazione.created_by)
+    u_main: DBUser = (await db.execute(user_stmt_main)).scalar_one_or_none()
+        
+    return {
+        "id": str(segnalazione.id),
+        "report_code": segnalazione.report_code,
+        "document_title": segnalazione.document_title,
+        "document_id": str(segnalazione.document_id) if segnalazione.document_id else None,
+        "reported_at": segnalazione.reported_at,
+        "stato": segnalazione.stato.value,
+        "priorita": segnalazione.priorita.value,
+        "note": segnalazione.note,
+        "created_by": u_main.email if u_main else "Sconosciuto",
+        "history": sorted(history_res, key=lambda x: x["created_at"])
+    }
+
