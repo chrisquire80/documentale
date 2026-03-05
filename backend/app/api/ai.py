@@ -47,17 +47,33 @@ async def chat_with_documents(
             DocumentContent.fulltext_content,
             Document.title,
             Document.is_restricted,
+            Document.status,
+            Document.current_version_id,
             DocumentContent.embedding.cosine_distance(cast(query_embedding, Vector)).label("distance")
         )
         .join(Document, DocumentContent.document_id == Document.id)
         .where(
             Document.is_deleted == False,
-            DocumentContent.embedding.isnot(None),
-            or_(Document.owner_id == current_user.id, Document.is_restricted == False)
+            DocumentContent.embedding.isnot(None)
         )
     )
 
-    # Se document_ids (multi-doc chat) è specificato, filtra per lista; altrimenti document_id singolo
+    role = getattr(current_user, "role", None)
+    if role and getattr(role, "value", role) != "ADMIN":
+        dept = getattr(current_user, "department", None)
+        stmt = stmt.where(
+            or_(
+                Document.department == dept,
+                Document.department == "Generale",
+                Document.department.is_(None),
+                Document.owner_id == current_user.id
+            )
+        ).where(
+            or_(
+                Document.is_restricted == False,
+                Document.owner_id == current_user.id
+            )
+        )
     if request.document_ids and len(request.document_ids) >= 2:
         stmt = stmt.where(Document.id.in_(request.document_ids))
     elif request.document_id:
@@ -83,11 +99,22 @@ async def chat_with_documents(
 
     context_text = ""
     sources = []
+    doc_versions_used = []
+    has_newer_drafts = False
+
     for row in rows:
-        # row: document_id, fulltext_content, title, is_restricted, distance
+        # row: document_id, fulltext_content, title, is_restricted, status, current_version_id, distance
         doc_id = str(row[0])
         fulltext = row[1] or ""
         title = row[2]
+        status_val = getattr(row[4], "value", row[4]) if row[4] else None
+        curr_ver_id = row[5]
+
+        if curr_ver_id:
+            doc_versions_used.append({"doc_id": doc_id, "ver_id": curr_ver_id})
+
+        if status_val == "draft":
+            has_newer_drafts = True
 
         # Estrai il numero di pagina se presente (es. [[PAGE:1]])
         page_match = re.search(r"\[\[PAGE:(\d+)\]\]", fulltext[:1000])
@@ -129,6 +156,12 @@ async def chat_with_documents(
             page_number=page_num
         ))
 
+    warning_message = None
+    if has_newer_drafts:
+        warning_msg = "Attenzione: uno o più documenti estratti sono in stato DRAFT e potrebbero contenere informazioni non ancora approvate."
+        context_text = f"[NOTA PER AI E UTENTE: {warning_msg}]\n\n" + context_text
+        warning_message = warning_msg
+
     # 4. prompt Gemini con Retrieval-Augmented Generation
     prompt = f"""
 Sei un assistente aziendale intelligente e professionale. Prima di rispondere, esegui i tuoi passi di ragionamento in italiano.
@@ -154,11 +187,11 @@ ISTRUZIONI:
         print("RAG: Configurazione Gemini...")
         genai.configure(api_key=settings.GEMINI_API_KEY)
         model = genai.GenerativeModel("gemini-2.0-flash")
-        
+
         print("RAG: Invio prompt a Gemini...")
         import asyncio
         response = await asyncio.to_thread(model.generate_content, prompt)
-        
+
         if not response or not response.text:
             print("RAG ERROR: Risposta Gemini vuota o nulla")
             answer = "Mi dispiace, Gemini non ha generato una risposta valida."
@@ -166,8 +199,7 @@ ISTRUZIONI:
         else:
             raw_text = response.text
             print(f"RAG: Risposta generata con successo ({len(raw_text)} caratteri).")
-            
-            # Parse reasoning steps from the structured block
+
             import re as _re
             reasoning_steps = []
             reasoning_match = _re.search(
@@ -178,25 +210,41 @@ ISTRUZIONI:
                 steps_text = reasoning_match.group(1).strip()
                 for line in steps_text.split('\n'):
                     line = line.strip()
-                    # Remove leading numbering like "1. ", "2. "
                     line = _re.sub(r'^\d+\.\s*', '', line)
                     if line:
                         reasoning_steps.append(line)
-                # Remove the reasoning block from the final answer
                 answer = _re.sub(
                     r'---RAGIONAMENTO---.*?---FINE RAGIONAMENTO---\s*',
                     '', raw_text, flags=_re.DOTALL
                 ).strip()
             else:
-                answer = raw_text
+                # No structured reasoning block — use full response as answer
+                answer = raw_text.strip()
     except Exception as e:
         print(f"RAG ERROR: Fallimento durante la generazione con Gemini: {e}")
         raise HTTPException(status_code=500, detail=f"Errore chiamata Gemini: {str(e)}")
 
+    from ..models.audit import AuditLog
+    try:
+        for use in doc_versions_used:
+            audit = AuditLog(
+                user_id=current_user.id,
+                action="AI_CHAT",
+                target_id=UUID(use["doc_id"]),
+                document_version_id=use["ver_id"],
+                query=request.query,
+                ai_response=answer
+            )
+            db.add(audit)
+        await db.commit()
+    except Exception as e:
+        print(f"RAG WARNING: Impossibile salvare audit log: {e}")
+
     return ChatResponse(
         answer=answer,
         sources=sources,
-        reasoning_steps=reasoning_steps
+        reasoning_steps=reasoning_steps,
+        warning=warning_message
     )
 
 
