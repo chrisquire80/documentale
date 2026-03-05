@@ -34,6 +34,14 @@ interface Segnalazione {
     note: string | null;
     history?: SegnalazioneHistory[];
     created_by?: string;
+    assigned_to?: string | null;
+    assigned_to_email?: string;
+}
+
+interface User {
+    id: string;
+    email: string;
+    role: string;
 }
 
 interface SegnalazioniResponse {
@@ -74,7 +82,17 @@ function DettaglioSegnalazioneModal({
     token: string | null;
 }) {
     const qc = useQueryClient();
+    const { data: users } = useQuery<User[]>({
+        queryKey: ['admin-users'],
+        queryFn: () =>
+            axios.get(`${BASE_URL}/api/admin/users`, {
+                headers: { Authorization: `Bearer ${token}` }
+            }).then(r => r.data),
+        enabled: !!token
+    });
+
     const [newNote, setNewNote] = useState('');
+    const [selectedAssignee, setSelectedAssignee] = useState<string>('');
 
     const { data: detail, isLoading } = useQuery<Segnalazione>({
         queryKey: ['governance-segnalazione-detail', segnalazioneId],
@@ -86,7 +104,7 @@ function DettaglioSegnalazioneModal({
     });
 
     const updateMutation = useMutation({
-        mutationFn: (payload: { stato?: Stato; note?: string }) =>
+        mutationFn: (payload: { stato?: Stato; note?: string; assigned_to?: string }) =>
             axios.patch(
                 `${BASE_URL}/api/admin/governance/segnalazioni/${segnalazioneId}`,
                 payload,
@@ -96,8 +114,14 @@ function DettaglioSegnalazioneModal({
             qc.invalidateQueries({ queryKey: ['governance-segnalazioni'] });
             qc.invalidateQueries({ queryKey: ['governance-segnalazione-detail', segnalazioneId] });
             setNewNote('');
+            setSelectedAssignee('');
         },
     });
+
+    const handleAssign = () => {
+        if (!selectedAssignee) return;
+        updateMutation.mutate({ assigned_to: selectedAssignee });
+    };
 
     const handleAddNote = () => {
         if (!newNote.trim()) return;
@@ -145,6 +169,13 @@ function DettaglioSegnalazioneModal({
 
                         <div className="sgn-info-label">Segnalato da:</div>
                         <div className="sgn-info-value">{detail.created_by}</div>
+
+                        <div className="sgn-info-label">Assegnato a:</div>
+                        <div className="sgn-info-value">
+                            <span className="sgn-assignee-text">
+                                {detail.assigned_to_email || 'Non assegnato'}
+                            </span>
+                        </div>
                     </div>
 
                     <hr className="sgn-divider" />
@@ -193,6 +224,11 @@ function DettaglioSegnalazioneModal({
                                     icon = <StickyNote size={14} className="tl-icon-note" />;
                                     colorCls = "tl-dot-note";
                                     text = `Nota Interna aggiunta da ${h.created_by}`;
+                                } else if (h.action_type === 'assigned') {
+                                    icon = <Shield size={14} className="tl-icon-assign" />;
+                                    colorCls = "tl-dot-assign";
+                                    const assigneeEmail = users?.find(u => u.id === h.new_value)?.email || h.new_value;
+                                    text = `Assegnata a: ${assigneeEmail} (${h.created_by})`;
                                 } else {
                                     icon = <Shield size={14} className="tl-icon-other" />;
                                     colorCls = "tl-dot-other";
@@ -221,9 +257,26 @@ function DettaglioSegnalazioneModal({
                 {/* Actions Footer */}
                 <div className="sgn-detail-footer">
                     <div className="sgn-detail-actions-left">
-                        <button className="sgn-btn sgn-btn-success" disabled>
-                            Assegna a Dual Basement
-                        </button>
+                        <div className="sgn-assignment-controls">
+                            <select
+                                className="sgn-form-select sgn-select-sm"
+                                aria-label="Seleziona utente da assegnare"
+                                value={selectedAssignee}
+                                onChange={e => setSelectedAssignee(e.target.value)}
+                            >
+                                <option value="">Seleziona Assegnatario...</option>
+                                {users?.filter(u => u.id !== detail.assigned_to).map(u => (
+                                    <option key={u.id} value={u.id}>{u.email} ({u.role})</option>
+                                ))}
+                            </select>
+                            <button
+                                className="sgn-btn sgn-btn-primary sgn-btn-sm"
+                                onClick={handleAssign}
+                                disabled={!selectedAssignee || updateMutation.isPending}
+                            >
+                                Assegna
+                            </button>
+                        </div>
 
                         <div className="sgn-inline-note-adder">
                             <input

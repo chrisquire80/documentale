@@ -27,7 +27,11 @@ class Document(Base):
     
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     department = Column(String, nullable=True, index=True)
-    status = Column(SQLEnum(DocumentStatus), default=DocumentStatus.DRAFT, index=True)
+    status = Column(
+        SQLEnum(DocumentStatus, values_callable=lambda obj: [e.value for e in obj]),
+        default=DocumentStatus.DRAFT,
+        index=True
+    )
     
     current_version_id = Column(UUID(as_uuid=True), ForeignKey("doc_versions.id", use_alter=True), nullable=True, index=True)
     
@@ -68,7 +72,11 @@ class DocumentVersion(Base):
     checksum = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
-    ai_status = Column(SQLEnum(AIStatus), default=AIStatus.PENDING, index=True)
+    ai_status = Column(
+        SQLEnum(AIStatus, values_callable=lambda obj: [e.value for e in obj]),
+        default=AIStatus.PENDING,
+        index=True
+    )
     ai_summary = Column(Text, nullable=True)
     vector_index_ref = Column(String, nullable=True)
 

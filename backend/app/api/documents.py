@@ -18,7 +18,7 @@ from datetime import datetime
 
 from ..db import get_db, SessionLocal
 from ..models.user import User, UserRole
-from ..models.document import Document, DocumentVersion, DocumentMetadata, DocumentContent, DocumentShare
+from ..models.document import Document, DocumentVersion, DocumentMetadata, DocumentContent, DocumentShare, DocumentVersionTag, Tag
 from ..models.audit import AuditLog
 from pgvector.sqlalchemy import Vector
 from ..schemas.doc_schemas import (
@@ -239,7 +239,7 @@ async def _run_ocr_background(
 # ── Upload ────────────────────────────────────────────────────────────────────
 
 @router.post("/upload", response_model=DocumentResponse)
-@limiter.limit("20/minute")
+@limiter.limit("500/minute")
 async def upload_document(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -319,7 +319,7 @@ async def upload_document(
             selectinload(Document.metadata_entries),
             selectinload(Document.owner),
             selectinload(Document.content),
-            selectinload(Document.versions)
+            selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
         )
         .where(Document.id == doc.id)
     )
@@ -407,7 +407,7 @@ async def upload_document_version(
             selectinload(Document.metadata_entries),
             selectinload(Document.owner),
             selectinload(Document.content),
-            selectinload(Document.versions)
+            selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
         )
         .where(Document.id == doc.id)
     )
@@ -496,7 +496,7 @@ async def update_document(
             selectinload(Document.metadata_entries),
             selectinload(Document.owner),
             selectinload(Document.content),
-            selectinload(Document.versions)
+            selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
         )
         .where(Document.id == doc.id)
     )
@@ -660,7 +660,8 @@ async def search_documents(
     stmt = select(*query_cols).options(
         selectinload(Document.metadata_entries),
         selectinload(Document.owner),
-        selectinload(Document.content)
+        selectinload(Document.content),
+        selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
     ).order_by(order_by_col)
     
     if need_content_join:
@@ -780,7 +781,7 @@ async def get_related_documents(
             selectinload(Document.metadata_entries),
             selectinload(Document.owner),
             selectinload(Document.content),
-            selectinload(Document.versions)
+            selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
         )
         .where(
             *filters,
@@ -1089,10 +1090,22 @@ async def get_documents_stats(
     # Ordinamento tag: top 10
     top_tags = dict(sorted(tags_count.items(), key=lambda item: item[1], reverse=True)[:10])
     
+    # Distribuzione per dipartimento
+    dept_stmt = select(Document.department, func.count(Document.id)).where(*filters).group_by(Document.department)
+    dept_rows = (await db.execute(dept_stmt)).all()
+    by_dept = {row[0] or "Generale": row[1] for row in dept_rows}
+
+    # Conteggio segnalazioni aperte (Governance)
+    from ..models.segnalazione import GovernanceSegnalazione, StatoSegnalazione
+    open_reports_stmt = select(func.count(GovernanceSegnalazione.id)).where(GovernanceSegnalazione.stato != StatoSegnalazione.risolta)
+    open_reports_count = (await db.execute(open_reports_stmt)).scalar() or 0
+    
     return {
         "total_documents": total_docs,
         "by_tags": top_tags,
-        "by_users": users_count
+        "by_users": users_count,
+        "by_department": by_dept,
+        "open_reports_count": open_reports_count
     }
 
 # ── Cestino / Soft Delete ─────────────────────────────────────────────────────
@@ -1117,7 +1130,7 @@ async def get_trash(
         selectinload(Document.metadata_entries),
         selectinload(Document.owner),
         selectinload(Document.content),
-        selectinload(Document.versions)
+        selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
     ).where(*filters).order_by(Document.deleted_at.desc()).offset(offset).limit(limit)
 
     documents = list((await db.execute(stmt)).scalars().unique().all())
@@ -1246,7 +1259,7 @@ async def restore_document(
         selectinload(Document.metadata_entries),
         selectinload(Document.owner),
         selectinload(Document.content),
-        selectinload(Document.versions)
+        selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
     ).where(Document.id == doc_id, Document.is_deleted == True)
     doc = (await db.execute(stmt)).scalar_one_or_none()
     

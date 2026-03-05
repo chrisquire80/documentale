@@ -57,6 +57,13 @@ class GovernanceSegnalazione(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    assigned_to = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    assigned_user = relationship("User", foreign_keys=[assigned_to])
 
     history = relationship(
         "GovernanceSegnalazioneHistory",

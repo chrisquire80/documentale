@@ -479,6 +479,7 @@ class SegnalazioneCreate(BaseModel):
 class SegnalazioneUpdate(BaseModel):
     stato: StatoSegnalazione | None = None
     note: str | None = None
+    assigned_to: UUID | None = None
 
 
 def _generate_report_code() -> str:
@@ -629,14 +630,23 @@ async def update_segnalazione(
 
     if payload.note is not None and payload.note.strip():
         # Aggiungere nota è trattato come evento a sé stante
-        # Nota: in un'implementazione più complessa 'note' potrebbe diventare una tabella separata o aggiungersi alla history in `new_value`
-        # Qui salviamo l'intera stringa in new_value o la sovrascriviamo in segnalazione.note
         segnalazione.note = payload.note
         
         history_entry = GovernanceSegnalazioneHistory(
             segnalazione_id=segnalazione.id,
             action_type=AzioneSegnalazione.note_added,
             new_value=payload.note,
+            created_by_id=current_user.id
+        )
+        db.add(history_entry)
+
+    if payload.assigned_to is not None:
+        segnalazione.assigned_to = payload.assigned_to
+        # Per semplicità, logghiamo l'assegnazione come azione
+        history_entry = GovernanceSegnalazioneHistory(
+            segnalazione_id=segnalazione.id,
+            action_type=AzioneSegnalazione.assigned,
+            new_value=str(payload.assigned_to),
             created_by_id=current_user.id
         )
         db.add(history_entry)
@@ -685,6 +695,11 @@ async def get_segnalazione_audit_trail(
         
     user_stmt_main = select(DBUser).where(DBUser.id == segnalazione.created_by)
     u_main: DBUser = (await db.execute(user_stmt_main)).scalar_one_or_none()
+
+    assigned_email = "Non assegnato"
+    if segnalazione.assigned_to:
+        u_assigned = (await db.execute(select(DBUser).where(DBUser.id == segnalazione.assigned_to))).scalar_one_or_none()
+        assigned_email = u_assigned.email if u_assigned else "Sconosciuto"
         
     return {
         "id": str(segnalazione.id),
@@ -696,6 +711,8 @@ async def get_segnalazione_audit_trail(
         "priorita": segnalazione.priorita.value,
         "note": segnalazione.note,
         "created_by": u_main.email if u_main else "Sconosciuto",
+        "assigned_to": str(segnalazione.assigned_to) if segnalazione.assigned_to else None,
+        "assigned_to_email": assigned_email,
         "history": sorted(history_res, key=lambda x: x["created_at"])
     }
 
