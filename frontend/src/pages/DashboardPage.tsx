@@ -130,10 +130,18 @@ const DashboardPage: React.FC = () => {
         },
     });
 
-    const documents = data?.items || [];
+    const documents = React.useMemo(() => data?.items ?? [], [data?.items]);
+    const selectedDocsSet = React.useMemo(() => new Set(selectedDocs), [selectedDocs]);
 
     const total = data?.total ?? 0;
     const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
+
+    const selectedTitles = React.useMemo(() => {
+        if (selectedDocsSet.size === 0 || documents.length === 0) return [];
+        return documents
+            .filter((doc: Document) => selectedDocsSet.has(doc.id))
+            .map((doc: Document) => doc.title);
+    }, [documents, selectedDocsSet]);
 
     // Client-side AI status filtering
     const filteredDocuments = React.useMemo(() => {
@@ -330,7 +338,7 @@ const DashboardPage: React.FC = () => {
                                                 key={doc.id}
                                                 doc={doc}
                                                 onUpdate={refetch}
-                                                isSelected={selectedDocs.includes(doc.id)}
+                                                isSelected={selectedDocsSet.has(doc.id)}
                                                 onToggleSelect={toggleDocSelection}
                                                 onChatOpen={setChatDoc}
                                                 onPreview={setFocusDoc}
@@ -349,7 +357,7 @@ const DashboardPage: React.FC = () => {
                                                 key={doc.id}
                                                 doc={doc}
                                                 onUpdate={refetch}
-                                                isSelected={selectedDocs.includes(doc.id)}
+                                                isSelected={selectedDocsSet.has(doc.id)}
                                                 onToggleSelect={toggleDocSelection}
                                                 onChatOpen={setChatDoc}
                                                 onPreview={setFocusDoc}
@@ -381,7 +389,7 @@ const DashboardPage: React.FC = () => {
                 selectedIds={selectedDocs}
                 onClearSelection={() => setSelectedDocs([])}
                 onSuccess={refetch}
-                selectedTitles={documents?.filter((d: Document) => selectedDocs.includes(d.id)).map((d: Document) => d.title)}
+                selectedTitles={selectedTitles}
             />
 
             {isUploadOpen && (
