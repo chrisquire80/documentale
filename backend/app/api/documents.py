@@ -1125,9 +1125,10 @@ async def get_documents_stats(
         # Query diretta per estrarre i tag dal JSONB
         tag_query = sa_text("""
             SELECT tag, count(*) 
-            FROM doc_metadata, jsonb_array_elements_text(COALESCE(metadata_json->'tags', '[]'::jsonb)) as tag
-            JOIN documents ON documents.id = doc_metadata.document_id
-            WHERE documents.is_deleted = false
+            FROM doc_metadata dm
+            CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(dm.metadata_json->'tags', '[]'::jsonb)) as tag
+            JOIN documents d ON d.id = dm.document_id
+            WHERE d.is_deleted = false
             GROUP BY tag
             ORDER BY count(*) DESC
             LIMIT 20
