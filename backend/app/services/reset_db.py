@@ -2,8 +2,23 @@ import asyncio
 import os
 import shutil
 from sqlalchemy import text
+from sqlalchemy.sql import quoted_name
 from ..db import SessionLocal, engine
 from ..core.config import settings
+
+# Whitelist rigida delle tabelle che possono essere svuotate per sicurezza
+ALLOWED_TABLES = {
+    "doc_version_tags",
+    "doc_conflicts",
+    "document_shares",
+    "doc_metadata",
+    "doc_content",
+    "governance_segnalazione_history",
+    "governance_segnalazioni",
+    "audit_logs",
+    "doc_versions",
+    "documents"
+}
 
 async def reset_database():
     print("⚠️  ATTENZIONE: Questo script eliminerà TUTTI i documenti, versioni, metadati e segnalazioni.")
@@ -28,8 +43,13 @@ async def reset_database():
         ]
         
         for table in tables:
+            if table not in ALLOWED_TABLES:
+                print(f"⚠️  Salto tabella non autorizzata: {table}")
+                continue
             try:
-                await conn.execute(text(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE;"))
+                # Usiamo quoted_name per gestire correttamente gli identificatori SQL
+                safe_table = quoted_name(table, quote=True)
+                await conn.execute(text(f"TRUNCATE TABLE {safe_table} RESTART IDENTITY CASCADE;"))
                 print(f" - Tabella {table} svuotata.")
             except Exception as e:
                 print(f" - Errore su {table}: {e}")
