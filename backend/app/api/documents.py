@@ -5,6 +5,7 @@ import logging
 import mimetypes
 import os
 import aiofiles
+import json
 from datetime import datetime, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Form, Query
 from fastapi.responses import StreamingResponse
@@ -17,7 +18,7 @@ from datetime import datetime
 
 from ..db import get_db, SessionLocal
 from ..models.user import User, UserRole
-from ..models.document import Document, DocumentVersion, DocumentMetadata, DocumentContent, DocumentShare, DocumentVersionTag, Tag
+from ..models.document import Document, DocumentVersion, DocumentMetadata, DocumentContent, DocumentShare, DocumentVersionTag, Tag, DocumentConflict, ConflictStatus
 from ..models.audit import AuditLog
 from pgvector.sqlalchemy import Vector
 from ..schemas.doc_schemas import (
@@ -175,9 +176,13 @@ async def _run_ocr_background(
                                         # Fallback per vecchi prompt o errori
                                         tag_name = tag_data
                                         page_num = None
+                                        conf = 1.0
+                                        reason = None
                                     else:
                                         tag_name = tag_data.get("name")
                                         page_num = tag_data.get("page")
+                                        conf = tag_data.get("confidence")
+                                        reason = tag_data.get("reasoning")
 
                                     tag_name_clean = str(tag_name).strip().lower()
                                     if not tag_name_clean: continue
@@ -201,7 +206,9 @@ async def _run_ocr_background(
                                             tag_id=existing_tag.id,
                                             is_ai_generated=True,
                                             status=TagStatus.SUGGESTED, # AI tags sono suggeriti finchè non validati
-                                            page_number=page_num
+                                            page_number=page_num,
+                                            confidence=conf,
+                                            ai_reasoning=reason
                                         ))
 
                 # Update structured legacy metadata block
@@ -228,6 +235,14 @@ async def _run_ocr_background(
                                 current_json[key] = value
 
                     meta.metadata_json = dict(current_json)
+
+                # 4. Proactive Conflict Detection (Wave 10)
+                if ai_metadata and ai_metadata.get("entities"):
+                    try:
+                        from ..services.comparison_service import detect_conflicts
+                        await detect_conflicts(db, doc_id, ai_metadata["entities"])
+                    except Exception as conf_err:
+                        logger.error(f"Error during conflict detection for {doc_id}: {conf_err}")
 
             await db.commit()
             logger.info("OCR/LLM completata per documento %s (%d chars).", doc_id, len(merged))
@@ -334,7 +349,8 @@ async def upload_document(
             selectinload(Document.metadata_entries),
             selectinload(Document.owner),
             selectinload(Document.content),
-            selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
+            selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag),
+            selectinload(Document.current_version_rel)
         )
         .where(Document.id == doc.id)
     )
@@ -342,28 +358,6 @@ async def upload_document(
     return doc_final
 
 
-@router.get("/{doc_id}", response_model=DocumentResponse)
-async def get_document(
-    doc_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Restituisce i metadati completi di un singolo documento."""
-    doc = await _get_accessible_doc(doc_id, current_user, db)
-    
-    # Re-fetch with all relationships for schema matching
-    stmt = (
-        select(Document)
-        .options(
-            selectinload(Document.metadata_entries),
-            selectinload(Document.owner),
-            selectinload(Document.content),
-            selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
-        )
-        .where(Document.id == doc_id)
-    )
-    doc_final = (await db.execute(stmt)).scalar_one()
-    return doc_final
 
 
 # ── Nuova Versione ────────────────────────────────────────────────────────────
@@ -446,7 +440,8 @@ async def upload_document_version(
             selectinload(Document.metadata_entries),
             selectinload(Document.owner),
             selectinload(Document.content),
-            selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
+            selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag),
+            selectinload(Document.current_version_rel)
         )
         .where(Document.id == doc.id)
     )
@@ -535,7 +530,8 @@ async def update_document(
             selectinload(Document.metadata_entries),
             selectinload(Document.owner),
             selectinload(Document.content),
-            selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
+            selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag),
+            selectinload(Document.current_version_rel)
         )
         .where(Document.id == doc.id)
     )
@@ -700,7 +696,8 @@ async def search_documents(
         selectinload(Document.metadata_entries),
         selectinload(Document.owner),
         selectinload(Document.content),
-        selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
+        selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag),
+        selectinload(Document.current_version_rel)
     ).order_by(order_by_col)
     
     if need_content_join:
@@ -820,7 +817,8 @@ async def get_related_documents(
             selectinload(Document.metadata_entries),
             selectinload(Document.owner),
             selectinload(Document.content),
-            selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
+            selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag),
+            selectinload(Document.current_version_rel)
         )
         .where(
             *filters,
@@ -1110,41 +1108,72 @@ async def get_documents_stats(
     total_docs_stmt = select(func.count(distinct(Document.id))).where(*filters)
     total_docs = (await db.execute(total_docs_stmt)).scalar() or 0
     
-    # Per semplicità, in questa prima iterazione carichiamo tutti i documenti rilevanti
-    # ed estraiamo i tag in memoria (essendo un JSON)
-    docs_stmt = select(Document).options(selectinload(Document.metadata_entries)).where(*filters)
-    docs = (await db.execute(docs_stmt)).scalars().all()
-    
-    tags_count = {}
-    users_count = {}
-    
-    for d in docs:
-        users_count[str(d.owner_id)] = users_count.get(str(d.owner_id), 0) + 1
-        
-        if d.metadata_entries and d.metadata_entries[0].metadata_json:
-            doc_tags = d.metadata_entries[0].metadata_json.get("tags", [])
-            for t in doc_tags:
-                tags_count[t] = tags_count.get(t, 0) + 1
-                
-    # Ordinamento tag: top 10
-    top_tags = dict(sorted(tags_count.items(), key=lambda item: item[1], reverse=True)[:10])
-    
-    # Distribuzione per dipartimento
+    # Distribuzione utenti
+    user_stmt = select(Document.owner_id, func.count(Document.id)).where(*filters).group_by(Document.owner_id)
+    user_rows = (await db.execute(user_stmt)).all()
+    by_user = {str(row[0]): row[1] for row in user_rows}
+
+    # Distribuzione dipartimenti
     dept_stmt = select(Document.department, func.count(Document.id)).where(*filters).group_by(Document.department)
     dept_rows = (await db.execute(dept_stmt)).all()
     by_dept = {row[0] or "Generale": row[1] for row in dept_rows}
+
+    # Distribuzione Tag (Ottimizzazione JSONB)
+    from sqlalchemy.sql import text as sa_text
+    tags_count = {}
+    try:
+        # Query diretta per estrarre i tag dal JSONB
+        tag_query = sa_text("""
+            SELECT tag, count(*) 
+            FROM doc_metadata, jsonb_array_elements_text(COALESCE(metadata_json->'tags', '[]'::jsonb)) as tag
+            JOIN documents ON documents.id = doc_metadata.document_id
+            WHERE documents.is_deleted = false
+            GROUP BY tag
+            ORDER BY count(*) DESC
+            LIMIT 20
+        """)
+        tag_rows = (await db.execute(tag_query)).all()
+        tags_count = {row[0]: row[1] for row in tag_rows}
+    except Exception as e:
+        logger.error(f"Errore query ottimizzata tag: {e}")
+        tags_count = {}
 
     # Conteggio segnalazioni aperte (Governance)
     from ..models.segnalazione import GovernanceSegnalazione, StatoSegnalazione
     open_reports_stmt = select(func.count(GovernanceSegnalazione.id)).where(GovernanceSegnalazione.stato != StatoSegnalazione.risolta)
     open_reports_count = (await db.execute(open_reports_stmt)).scalar() or 0
     
+    # Conteggio documenti validabili automaticamente (Wave 6)
+    # Criteri: status == AI_READY, confidence_score > 0.9, no pending conflicts
+    from ..models.document import DocumentStatus, AIStatus, DocumentConflict, ConflictStatus
+    
+    # Sotto-query per contare i conflitti pendenti per documento
+    conflicts_subquery = (
+        select(DocumentConflict.document_id, func.count(DocumentConflict.id).label("count"))
+        .where(DocumentConflict.status == ConflictStatus.PENDING)
+        .group_by(DocumentConflict.document_id)
+        .subquery()
+    )
+    
+    validatable_stmt = (
+        select(func.count(distinct(Document.id)))
+        .outerjoin(conflicts_subquery, Document.id == conflicts_subquery.c.document_id)
+        .where(
+            *filters,
+            Document.status == DocumentStatus.AI_READY,
+            Document.confidence_score >= 0.9,
+            or_(conflicts_subquery.c.count == 0, conflicts_subquery.c.count == None)
+        )
+    )
+    validatable_count = (await db.execute(validatable_stmt)).scalar() or 0
+    
     return {
         "total_documents": total_docs,
-        "by_tags": top_tags,
-        "by_users": users_count,
+        "by_tags": tags_count,
+        "by_users": by_user,
         "by_department": by_dept,
-        "open_reports_count": open_reports_count
+        "open_reports_count": open_reports_count,
+        "validatable_count": validatable_count
     }
 
 # ── Cestino / Soft Delete ─────────────────────────────────────────────────────
@@ -1169,10 +1198,17 @@ async def get_trash(
         selectinload(Document.metadata_entries),
         selectinload(Document.owner),
         selectinload(Document.content),
-        selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
+        selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag),
+        selectinload(Document.current_version_rel)
     ).where(*filters).order_by(Document.deleted_at.desc()).offset(offset).limit(limit)
 
     documents = list((await db.execute(stmt)).scalars().unique().all())
+
+    for d in documents:
+        if not hasattr(d, 'highlight_snippet'):
+            d.highlight_snippet = None
+        if not hasattr(d, 'is_indexed'):
+            d.is_indexed = False # Trash items don't need real-time index check for this view
 
     return PaginatedDocuments(
         items=[DocumentResponse.model_validate(d) for d in documents],
@@ -1298,7 +1334,8 @@ async def restore_document(
         selectinload(Document.metadata_entries),
         selectinload(Document.owner),
         selectinload(Document.content),
-        selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag)
+        selectinload(Document.versions).selectinload(DocumentVersion.tags).selectinload(DocumentVersionTag.tag),
+        selectinload(Document.current_version_rel)
     ).where(Document.id == doc_id, Document.is_deleted == True)
     doc = (await db.execute(stmt)).scalar_one_or_none()
     
@@ -1455,3 +1492,125 @@ async def reject_tag(
     
     await db.commit()
     return {"message": "Tag rimosso correttamente."}
+
+@router.post("/{doc_id}/conflicts/{conflict_id}/resolve")
+async def resolve_document_conflict(
+    doc_id: UUID,
+    conflict_id: UUID,
+    action: str = Query(..., regex="^(resolve|ignore)$"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Risolve o ignora un conflitto semantico tra documenti."""
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Solo gli amministratori possono risolvere i conflitti.")
+
+    stmt = select(DocumentConflict).where(
+        DocumentConflict.id == conflict_id,
+        DocumentConflict.document_id == doc_id
+    )
+    conflict = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not conflict:
+        raise HTTPException(status_code=404, detail="Conflitto non trovato.")
+
+    if action == "resolve":
+        conflict.status = ConflictStatus.RESOLVED
+    else:
+        conflict.status = ConflictStatus.IGNORED
+
+    conflict.resolved_at = func.now()
+    conflict.resolved_by = current_user.id
+
+    await db.commit()
+    return {"message": f"Conflitto {action} successfully."}
+@router.post("/bulk-validate")
+async def bulk_validate_documents(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Validazione massiva dei documenti "sicuri" (Confidenza > 90% e Zero Conflitti).
+    Solo per amministratori.
+    """
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Azione riservata agli amministratori.")
+
+    from ..models.document import DocumentStatus, DocumentConflict, ConflictStatus, DocumentVersionTag, TagStatus
+    
+    # Sotto-query per documenti con conflitti pendenti
+    conflicts_subquery = (
+        select(DocumentConflict.document_id)
+        .where(DocumentConflict.status == ConflictStatus.PENDING)
+    )
+    
+    # Identifica i documenti da validare
+    stmt = (
+        select(Document)
+        .where(
+            Document.is_deleted == False,
+            Document.status == DocumentStatus.AI_READY,
+            Document.confidence_score >= 0.9,
+            ~Document.id.in_(conflicts_subquery)
+        )
+    )
+    docs_to_validate = (await db.execute(stmt)).scalars().all()
+    
+    validated_count = 0
+    for doc in docs_to_validate:
+        doc.status = DocumentStatus.VALIDATED
+        doc.validation_method = "AUTO_BULK_CONFIDENCE"
+        doc.validated_at = datetime.now(timezone.utc)
+        
+        # Valida anche tutti i tag associati alla versione corrente
+        if doc.current_version_id:
+            tag_stmt = (
+                sa_update(DocumentVersionTag)
+                .where(DocumentVersionTag.document_version_id == doc.current_version_id)
+                .values(status=TagStatus.VALIDATED)
+            )
+            await db.execute(tag_stmt)
+            
+            db.add(AuditLog(
+                user_id=current_user.id, 
+                action="BULK_VALIDATE", 
+                target_id=doc.id,
+                details=json.dumps({"method": "AUTO_BULK", "confidence": doc.confidence_score})
+            ))
+            validated_count += 1
+        
+    await db.commit()
+    
+    # In una versione reale, qui si triggererebbe la generazione dei certificati PDF in background
+    # background_tasks.add_task(generate_bulk_validation_reports, [d.id for d in docs_to_validate])
+    
+    return {
+        "message": f"Validazione completata con successo per {validated_count} documenti.",
+        "validated_count": validated_count
+    }
+
+# ── Get Single Document (Variable Route - MUST BE LAST) ───────────────────────
+
+# Restituisce i metadati completi di un singolo documento.
+@router.get("/{doc_id}", response_model=DocumentResponse)
+async def get_document(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    doc = await _get_accessible_doc(doc_id, current_user, db)
+    if not doc:
+        raise HTTPException(
+            status_code=404, detail="Documento non trovato o accesso negato."
+        )
+
+    # Assicuriamoci che la versione corrente sia caricata
+    from sqlalchemy.orm import selectinload
+    stmt = (
+        select(Document)
+        .options(selectinload(Document.current_version_rel))
+        .where(Document.id == doc_id)
+    )
+    doc = (await db.execute(stmt)).scalar_one()
+
+    return doc

@@ -25,7 +25,7 @@ const UserCreationModal: React.FC<Props> = ({ onClose, onSuccess }) => {
 
         try {
             const token = localStorage.getItem('token');
-            await axios.post(`${BASE_URL}/api/admin/users`, {
+            await axios.post(`${BASE_URL}/admin/users`, {
                 email,
                 password,
                 role,

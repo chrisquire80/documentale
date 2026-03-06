@@ -14,7 +14,7 @@ const RelatedDocumentsModal: React.FC<RelatedDocumentsModalProps> = ({ isOpen, o
     const { data: relatedDocs, isLoading, error } = useQuery({
         queryKey: ['documents', docId, 'related'],
         queryFn: async () => {
-            const res = await api.get(`/api/documents/${docId}/related?limit=5`);
+            const res = await api.get(`/documents/${docId}/related?limit=5`);
             return res.data;
         },
         enabled: isOpen,

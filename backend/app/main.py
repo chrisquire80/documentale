@@ -13,7 +13,18 @@ app = FastAPI(title=settings.PROJECT_NAME)
 
 # Rate limiting
 app.state.limiter = limiter
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    print(f"VALIDATION ERROR: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
 
 app.add_middleware(
     CORSMiddleware,

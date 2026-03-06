@@ -85,7 +85,7 @@ function DettaglioSegnalazioneModal({
     const { data: users } = useQuery<User[]>({
         queryKey: ['admin-users'],
         queryFn: () =>
-            axios.get(`${BASE_URL}/api/admin/users`, {
+            axios.get(`${BASE_URL}/admin/users`, {
                 headers: { Authorization: `Bearer ${token}` }
             }).then(r => r.data),
         enabled: !!token
@@ -97,7 +97,7 @@ function DettaglioSegnalazioneModal({
     const { data: detail, isLoading } = useQuery<Segnalazione>({
         queryKey: ['governance-segnalazione-detail', segnalazioneId],
         queryFn: () =>
-            axios.get(`${BASE_URL}/api/admin/governance/segnalazioni/${segnalazioneId}`, {
+            axios.get(`${BASE_URL}/admin/governance/segnalazioni/${segnalazioneId}`, {
                 headers: { Authorization: `Bearer ${token}` }
             }).then(r => r.data),
         enabled: !!segnalazioneId
@@ -106,7 +106,7 @@ function DettaglioSegnalazioneModal({
     const updateMutation = useMutation({
         mutationFn: (payload: { stato?: Stato; note?: string; assigned_to?: string }) =>
             axios.patch(
-                `${BASE_URL}/api/admin/governance/segnalazioni/${segnalazioneId}`,
+                `${BASE_URL}/admin/governance/segnalazioni/${segnalazioneId}`,
                 payload,
                 { headers: { Authorization: `Bearer ${token}` } },
             ),
@@ -331,7 +331,7 @@ function NewSegnalazioneForm({ onClose, token }: { onClose: () => void; token: s
     const mutation = useMutation({
         mutationFn: (data: NewFormData) =>
             axios.post(
-                `${BASE_URL}/api/admin/governance/segnalazioni`,
+                `${BASE_URL}/admin/governance/segnalazioni`,
                 data,
                 { headers: { Authorization: `Bearer ${token}` } },
             ),
@@ -457,7 +457,7 @@ const GovernanceSegnalazioniModal: React.FC<Props> = ({ onClose }) => {
         queryKey: ['governance-segnalazioni', filterStato, filterPriorita],
         queryFn: () =>
             axios
-                .get(`${BASE_URL}/api/admin/governance/segnalazioni?${params}`, {
+                .get(`${BASE_URL}/admin/governance/segnalazioni?${params}`, {
                     headers: { Authorization: `Bearer ${token}` },
                 })
                 .then(r => r.data),
@@ -467,7 +467,7 @@ const GovernanceSegnalazioniModal: React.FC<Props> = ({ onClose }) => {
     const updateMutation = useMutation({
         mutationFn: ({ id, stato }: { id: string; stato: Stato }) =>
             axios.patch(
-                `${BASE_URL}/api/admin/governance/segnalazioni/${id}`,
+                `${BASE_URL}/admin/governance/segnalazioni/${id}`,
                 { stato },
                 { headers: { Authorization: `Bearer ${token}` } },
             ),

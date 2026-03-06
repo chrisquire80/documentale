@@ -49,7 +49,7 @@ const AdminPage: React.FC = () => {
         queryFn: async () => {
             const token = localStorage.getItem('token');
             const offset = (userPage - 1) * usersPerPage;
-            const res = await axios.get(`${BASE_URL}/api/admin/users?skip=${offset}&limit=${usersPerPage}`, {
+            const res = await axios.get(`${BASE_URL}/admin/users?skip=${offset}&limit=${usersPerPage}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             return res.data;
@@ -63,7 +63,7 @@ const AdminPage: React.FC = () => {
         queryFn: async () => {
             const token = localStorage.getItem('token');
             const offset = (auditPage - 1) * auditPerPage;
-            const res = await axios.get(`${BASE_URL}/api/admin/audit?skip=${offset}&limit=${auditPerPage}`, {
+            const res = await axios.get(`${BASE_URL}/admin/audit?skip=${offset}&limit=${auditPerPage}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             return res.data;
@@ -75,7 +75,7 @@ const AdminPage: React.FC = () => {
     const toggleUserStatusMutation = useMutation({
         mutationFn: async ({ userId, isActive }: { userId: string, isActive: boolean }) => {
             const token = localStorage.getItem('token');
-            return axios.patch(`${BASE_URL}/api/admin/users/${userId}`, { is_active: isActive }, {
+            return axios.patch(`${BASE_URL}/admin/users/${userId}`, { is_active: isActive }, {
                 headers: { Authorization: `Bearer ${token}` }
             });
         },
@@ -86,7 +86,7 @@ const AdminPage: React.FC = () => {
         setIsExporting(true);
         try {
             const token = localStorage.getItem('token');
-            const response = await axios.get(`${BASE_URL}/api/admin/audit/export`, {
+            const response = await axios.get(`${BASE_URL}/admin/audit/export`, {
                 headers: { Authorization: `Bearer ${token}` },
                 responseType: 'blob', // Impostiamo responseType per gestire il raw data (CSV Stream)
             });

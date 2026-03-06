@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2, Bot, Sparkles } from 'lucide-react';
+import { FileDown, Calendar, User as UserIcon, Eye, Pencil, Share2, MessageSquare, History, Trash2, Upload as UploadIcon, Link2, Bot, Sparkles, AlertTriangle, HelpCircle, CheckCircle } from 'lucide-react';
 import DocumentPreviewModal from './DocumentPreviewModal';
 import EditMetadataModal from './EditMetadataModal';
 import DocumentVersionModal from './DocumentVersionModal';
@@ -9,6 +9,7 @@ import ShareModal from './ShareModal';
 import CommentsPanel from './CommentsPanel';
 import UploadModal from './UploadModal';
 import RelatedDocumentsModal from './RelatedDocumentsModal';
+import ConflictResolutionModal from './ConflictResolutionModal';
 import { useAuth } from '../store/AuthContext';
 
 /** Badge indicatore di indicizzazione AI (riutilizzato anche in DocumentRow) */
@@ -44,13 +45,14 @@ const DocumentCard: React.FC<{
     const [versionOpen, setVersionOpen] = useState(false);
     const [uploadVersionOpen, setUploadVersionOpen] = useState(false);
     const [relatedOpen, setRelatedOpen] = useState(false);
+    const [conflictOpen, setConflictOpen] = useState(false);
 
     const canEdit = (currentUser?.role as string) === 'ADMIN' || currentUser?.id === doc.owner_id;
 
     const softDeleteMutation = useMutation({
         mutationFn: (docId: string) => {
             const token = localStorage.getItem('token');
-            return axios.delete(`${BASE_URL}/api/documents/${docId}`, {
+            return axios.delete(`${BASE_URL}/documents/${docId}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
         },
@@ -61,9 +63,9 @@ const DocumentCard: React.FC<{
     });
 
     const approveTagMutation = useMutation({
-        mutationFn: ({ versionId, tagId }: { versionId: string, tagId: string }) => {
+        mutationFn: ({ tagId }: { tagId: string }) => {
             const token = localStorage.getItem('token');
-            return axios.post(`${BASE_URL}/api/documents/${doc.id}/versions/${versionId}/tags/${tagId}/approve`, {}, {
+            return axios.post(`${BASE_URL}/documents/${doc.id}/tags/${tagId}/approve`, {}, {
                 headers: { Authorization: `Bearer ${token}` }
             });
         },
@@ -74,9 +76,9 @@ const DocumentCard: React.FC<{
     });
 
     const rejectTagMutation = useMutation({
-        mutationFn: ({ versionId, tagId }: { versionId: string, tagId: string }) => {
+        mutationFn: ({ tagId }: { tagId: string }) => {
             const token = localStorage.getItem('token');
-            return axios.delete(`${BASE_URL}/api/documents/${doc.id}/versions/${versionId}/tags/${tagId}`, {
+            return axios.delete(`${BASE_URL}/documents/${doc.id}/tags/${tagId}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
         },
@@ -158,9 +160,24 @@ const DocumentCard: React.FC<{
                     gap: '8px'
                 }}>
                     {doc.title}
+                    {doc.category && (
+                        <span style={{ fontSize: '0.65rem', color: '#60a5fa', background: 'rgba(96, 165, 250, 0.1)', padding: '1px 5px', borderRadius: '4px', border: '1px solid rgba(96, 165, 250, 0.2)', fontWeight: 600, textTransform: 'uppercase' }}>
+                            {doc.category}
+                        </span>
+                    )}
+                    {doc.status === 'validated' && (
+                        <span style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', background: 'rgba(16, 185, 129, 0.1)', padding: '1px 6px', borderRadius: '4px' }}>
+                            <CheckCircle size={12} /> Validato
+                        </span>
+                    )}
                     {doc.relevance_score != null && (
                         <span className="relevance-badge" style={{ fontSize: '0.7rem', color: '#10b981', background: 'rgba(16, 185, 129, 0.15)', padding: '2px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
                             {doc.relevance_score}% Match
+                        </span>
+                    )}
+                    {doc.conflicts && doc.conflicts.some((c: any) => c.status === 'pending') && (
+                        <span className="conflict-badge pulse" title="Rilevati conflitti semantici con altri documenti" style={{ fontSize: '0.65rem', color: '#fff', background: '#ef4444', padding: '1px 6px', borderRadius: '4px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                            <AlertTriangle size={10} /> Conflitti
                         </span>
                     )}
                 </h3>
@@ -229,6 +246,11 @@ const DocumentCard: React.FC<{
                 <button onClick={() => setRelatedOpen(true)} title="Correlati" className="icon-btn">
                     <Link2 size={16} />
                 </button>
+                {doc.conflicts && doc.conflicts.some((c: any) => c.status === 'pending') && (
+                    <button onClick={() => setConflictOpen(true)} title="Risolvi Conflitti" className="icon-btn" style={{ color: '#ef4444' }}>
+                        <AlertTriangle size={16} />
+                    </button>
+                )}
                 {canEdit && (
                     <>
                         <div style={{ width: '1px', height: '16px', background: 'var(--glass)', margin: '0 0.2rem', alignSelf: 'center' }} />
@@ -289,31 +311,33 @@ const DocumentCard: React.FC<{
                             display: 'inline-flex',
                             alignItems: 'center',
                             gap: '0.25rem',
-                            background: t.is_ai_generated ? 'rgba(56, 189, 248, 0.1)' : 'var(--primary)',
-                            border: t.is_ai_generated ? '1px dashed #38bdf8' : '1px solid transparent',
-                            color: t.is_ai_generated ? '#38bdf8' : 'var(--text-main)',
+                            background: (t.is_ai_generated && doc.status !== 'validated') ? 'rgba(56, 189, 248, 0.1)' : 'var(--primary)',
+                            border: (t.is_ai_generated && doc.status !== 'validated') ? '1px dashed #38bdf8' : '1px solid transparent',
+                            color: (t.is_ai_generated && doc.status !== 'validated') ? '#38bdf8' : t.status === 'validated' ? '#10b981' : 'var(--text-main)',
                             padding: '0.15rem 0.4rem',
                             borderRadius: '0.25rem',
-                            fontSize: '0.75rem'
+                            fontSize: '0.75rem',
+                            fontWeight: t.status === 'validated' || doc.status === 'validated' ? 600 : 400
                         }}
-                        title={t.is_ai_generated ? "Tag suggerito dall'AI" : "Tag confermato"}
+                        title={t.is_ai_generated ? `AI Suggestion${t.page_number ? ` (p. ${t.page_number})` : ''}${t.confidence ? ` - Confidence: ${(t.confidence * 100).toFixed(0)}%` : ''}${t.ai_reasoning ? `\n\nReasoning: ${t.ai_reasoning}` : ''}` : "Confirmed Tag"}
                     >
-                        {t.is_ai_generated && <Sparkles size={12} />}
+                        {t.is_ai_generated && <Sparkles size={11} />}
                         {t.tag.name}
+                        {t.is_ai_generated && t.ai_reasoning && <HelpCircle size={10} style={{ opacity: 0.6 }} />}
 
                         {t.is_ai_generated && canEdit && (
                             <div style={{ display: 'flex', gap: '2px', marginLeft: '4px' }}>
                                 <button
-                                    onClick={(e) => { e.stopPropagation(); approveTagMutation.mutate({ versionId: doc.versions[0].id, tagId: t.tag.id }); }}
+                                    onClick={(e) => { e.stopPropagation(); approveTagMutation.mutate({ tagId: t.tag.id }); }}
                                     title="Approva tag"
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#10b981', padding: '0' }}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#10b981', padding: '0', fontWeight: 'bold' }}
                                 >
                                     ✓
                                 </button>
                                 <button
-                                    onClick={(e) => { e.stopPropagation(); rejectTagMutation.mutate({ versionId: doc.versions[0].id, tagId: t.tag.id }); }}
+                                    onClick={(e) => { e.stopPropagation(); rejectTagMutation.mutate({ tagId: t.tag.id }); }}
                                     title="Rifiuta tag"
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '0' }}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '0', fontWeight: 'bold' }}
                                 >
                                     ×
                                 </button>
@@ -401,6 +425,14 @@ const DocumentCard: React.FC<{
                     onClose={() => setRelatedOpen(false)}
                     docId={doc.id}
                     docTitle={doc.title}
+                />
+            )}
+
+            {conflictOpen && (
+                <ConflictResolutionModal
+                    isOpen={conflictOpen}
+                    onClose={() => setConflictOpen(false)}
+                    doc={doc}
                 />
             )}
         </div>

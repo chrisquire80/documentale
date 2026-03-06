@@ -1,5 +1,5 @@
 import React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, PieChart as PieIcon, Users, Tag, FileText, Shield } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import api from '../services/api';
@@ -11,6 +11,7 @@ interface DocumentStats {
     by_users: Record<string, number>;
     by_department: Record<string, number>;
     open_reports_count: number;
+    validatable_count: number;
 }
 
 interface Props {
@@ -32,11 +33,25 @@ const StatBox: React.FC<{ icon: React.ReactNode; label: string; value: string | 
 );
 
 const DashboardStatsModal: React.FC<Props> = ({ onClose }) => {
+    const queryClient = useQueryClient();
+
     const { data, isLoading, error } = useQuery<DocumentStats>({
         queryKey: ['doc-stats'],
         queryFn: async () => {
             const res = await api.get('/documents/stats');
             return res.data;
+        }
+    });
+
+    const bulkValidateMutation = useMutation({
+        mutationFn: () => api.post('/documents/bulk-validate'),
+        onSuccess: (res: any) => {
+            alert(res.data.message);
+            queryClient.invalidateQueries({ queryKey: ['doc-stats'] });
+            queryClient.invalidateQueries({ queryKey: ['documents'] });
+        },
+        onError: () => {
+            alert("Errore durante la validazione massiva.");
         }
     });
 
@@ -156,6 +171,68 @@ const DashboardStatsModal: React.FC<Props> = ({ onClose }) => {
                                         ))}
                                     </div>
                                 )}
+                            </div>
+                        </div>
+
+                        {/* Automazione Intelligente (Wave 6) */}
+                        <div className="automation-section" style={{ marginTop: '2.5rem', padding: '1.5rem', background: 'rgba(99, 102, 241, 0.05)', borderRadius: '1rem', border: '1px solid rgba(99, 102, 241, 0.2)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                                <div style={{ flex: 1 }}>
+                                    <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#818cf8' }}>
+                                        <Shield size={20} /> Automazione Intelligente
+                                    </h3>
+                                    <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                                        L'IA ha identificato documenti pronti per la validazione automatica (Confidenza &gt; 90%, Zero Conflitti).
+                                    </p>
+                                </div>
+                                <button
+                                    className="btn"
+                                    disabled={!data || data.validatable_count === 0 || bulkValidateMutation.isPending}
+                                    onClick={() => {
+                                        if (window.confirm(`Stai per validare ${data?.validatable_count} documenti. Procedere?`)) {
+                                            bulkValidateMutation.mutate();
+                                        }
+                                    }}
+                                    style={{
+                                        width: 'auto',
+                                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                        boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
+                                        border: 'none',
+                                        padding: '0.75rem 1.5rem',
+                                        color: 'white',
+                                        fontWeight: 600
+                                    }}
+                                >
+                                    {bulkValidateMutation.isPending ? 'Validazione...' : '🚀 Avvia Validazione Massiva'}
+                                </button>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                                        <span style={{ color: '#10b981', fontWeight: 600 }}>{data.validatable_count} Automabili</span>
+                                        <span style={{ color: '#f59e0b', fontWeight: 600 }}>{data.total_documents - data.validatable_count} Da Revisionare</span>
+                                    </div>
+                                    <div style={{ height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden', display: 'flex' }}>
+                                        <div style={{
+                                            width: `${(data.validatable_count / data.total_documents) * 100}%`,
+                                            background: '#10b981',
+                                            height: '100%'
+                                        }} />
+                                        <div style={{
+                                            width: `${((data.total_documents - data.validatable_count) / data.total_documents) * 100}%`,
+                                            background: '#f59e0b',
+                                            height: '100%',
+                                            opacity: 0.3
+                                        }} />
+                                    </div>
+                                </div>
+                                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '0.75rem', textAlign: 'center', minWidth: '100px' }}>
+                                    <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#fff' }}>
+                                        {data.total_documents > 0 ? Math.round((data.validatable_count / data.total_documents) * 100) : 0}%
+                                    </div>
+                                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Efficienza AI</div>
+                                </div>
                             </div>
                         </div>
                     </div>

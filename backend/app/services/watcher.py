@@ -35,16 +35,21 @@ class AutoIngestHandler(FileSystemEventHandler):
     def __init__(self, loop):
         self.loop = loop
         self.storage = LocalStorage(settings.STORAGE_PATH)
+        self.processing_files = set() # Track files currently being ingested
 
     def on_created(self, event):
         if not event.is_directory:
             file_path = event.src_path
             ext = os.path.splitext(file_path)[1].lower()
             if ext in settings.ALLOWED_EXTENSIONS:
+                if file_path in self.processing_files:
+                    return
+                
                 print(f"Watchdog: Detected new file {file_path}. Scheduling ingestion...")
+                self.processing_files.add(file_path)
                 # Schedule the async ingestion task safely onto the main loop
                 self.loop.call_soon_threadsafe(
-                    lambda p: self.loop.create_task(self.process_file(p)),
+                    lambda p: self.loop.create_task(self.process_file_safe(p)),
                     file_path
                 )
 
@@ -52,6 +57,13 @@ class AutoIngestHandler(FileSystemEventHandler):
         stmt = select(User).where(User.email == settings.AUTO_USER_EMAIL)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def process_file_safe(self, file_path: str):
+        try:
+            await self.process_file(file_path)
+        finally:
+            if file_path in self.processing_files:
+                self.processing_files.remove(file_path)
 
     async def process_file(self, file_path: str):
         # Wait a bit to ensure the file is completely written (copied) by the host OS

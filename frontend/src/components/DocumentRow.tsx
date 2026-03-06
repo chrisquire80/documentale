@@ -1,8 +1,10 @@
 import React, { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { FileDown, Calendar, Eye, Pencil, Share2, Bot, Trash2, MessageSquare } from 'lucide-react';
+import { FileDown, Calendar, Eye, Pencil, Share2, Bot, Trash2, MessageSquare, Sparkles, AlertTriangle, HelpCircle, Link2, CheckCircle } from 'lucide-react';
 import DocumentPreviewModal from './DocumentPreviewModal';
+import RelatedDocumentsModal from './RelatedDocumentsModal';
+import ConflictResolutionModal from './ConflictResolutionModal';
 import EditMetadataModal from './EditMetadataModal';
 import ShareModal from './ShareModal';
 import CommentsPanel from './CommentsPanel';
@@ -25,13 +27,41 @@ const DocumentRow: React.FC<{
     const [editOpen, setEditOpen] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
     const [commentsOpen, setCommentsOpen] = useState(false);
+    const [relatedOpen, setRelatedOpen] = useState(false);
+    const [conflictOpen, setConflictOpen] = useState(false);
 
     const canEdit = (currentUser?.role as string) === 'ADMIN' || currentUser?.id === doc.owner_id;
 
     const softDeleteMutation = useMutation({
         mutationFn: (docId: string) => {
             const token = localStorage.getItem('token');
-            return axios.delete(`${BASE_URL}/api/documents/${docId}`, {
+            return axios.delete(`${BASE_URL}/documents/${docId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['documents'] });
+            if (onUpdate) onUpdate();
+        }
+    });
+
+    const approveTagMutation = useMutation({
+        mutationFn: ({ tagId }: { tagId: string }) => {
+            const token = localStorage.getItem('token');
+            return axios.post(`${BASE_URL}/documents/${doc.id}/tags/${tagId}/approve`, {}, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['documents'] });
+            if (onUpdate) onUpdate();
+        }
+    });
+
+    const rejectTagMutation = useMutation({
+        mutationFn: ({ tagId }: { tagId: string }) => {
+            const token = localStorage.getItem('token');
+            return axios.delete(`${BASE_URL}/documents/${doc.id}/tags/${tagId}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
         },
@@ -88,9 +118,24 @@ const DocumentRow: React.FC<{
                     <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', gap: '4px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span className="doc-row-name" title={doc.title}>{doc.title}</span>
+                            {doc.category && (
+                                <span style={{ fontSize: '0.65rem', color: '#60a5fa', background: 'rgba(96, 165, 250, 0.1)', padding: '1px 5px', borderRadius: '4px', border: '1px solid rgba(96, 165, 250, 0.2)', fontWeight: 600, textTransform: 'uppercase' }}>
+                                    {doc.category}
+                                </span>
+                            )}
+                            {doc.status === 'validated' && (
+                                <span style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', background: 'rgba(16, 185, 129, 0.1)', padding: '1px 6px', borderRadius: '4px' }}>
+                                    <CheckCircle size={12} /> Validato
+                                </span>
+                            )}
                             {doc.relevance_score != null && (
                                 <span className="relevance-badge" style={{ fontSize: '0.7rem', color: '#10b981', background: 'rgba(16, 185, 129, 0.15)', padding: '2px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
                                     {doc.relevance_score}% Match
+                                </span>
+                            )}
+                            {doc.conflicts && doc.conflicts.some((c: any) => c.status === 'pending') && (
+                                <span className="conflict-badge pulse" title="Rilevati conflitti semantici con altri documenti" style={{ fontSize: '0.65rem', color: '#fff', background: '#ef4444', padding: '1px 6px', borderRadius: '4px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                    <AlertTriangle size={10} /> Conflitti
                                 </span>
                             )}
                         </div>
@@ -106,7 +151,45 @@ const DocumentRow: React.FC<{
 
                 {/* Tags */}
                 <div className="doc-row-tags">
-                    {tags.slice(0, 3).map((t: string) => (
+                    {/* Relational Tags (from newest version) */}
+                    {doc.versions && doc.versions.length > 0 && doc.versions[0].tags?.slice(0, 3).map((t: any) => (
+                        <span
+                            key={t.tag.id}
+                            style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.25rem',
+                                background: (t.status === 'suggested' && doc.status !== 'validated') ? 'rgba(56, 189, 248, 0.08)' : 'var(--primary)',
+                                border: (t.status === 'suggested' && doc.status !== 'validated') ? '1px dashed #38bdf8' : '1px solid transparent',
+                                color: (t.status === 'suggested' && doc.status !== 'validated') ? '#38bdf8' : t.status === 'validated' ? '#10b981' : 'var(--text-main)',
+                                padding: '0.15rem 0.4rem',
+                                borderRadius: '0.25rem',
+                                fontSize: '0.72rem',
+                                fontWeight: t.status === 'validated' || doc.status === 'validated' ? 600 : 400
+                            }}
+                            title={t.is_ai_generated ? `AI Suggestion${t.page_number ? ` (p. ${t.page_number})` : ''}${t.confidence ? ` - Confidence: ${(t.confidence * 100).toFixed(0)}%` : ''}${t.ai_reasoning ? `\n\nReasoning: ${t.ai_reasoning}` : ''}` : "Confirmed Tag"}
+                        >
+                            {t.is_ai_generated && <Sparkles size={11} />}
+                            {t.tag.name}
+                            {t.is_ai_generated && t.ai_reasoning && <HelpCircle size={10} style={{ opacity: 0.6 }} />}
+                            {t.status === 'suggested' && canEdit && (
+                                <div style={{ display: 'flex', gap: '2px', marginLeft: '4px', borderLeft: '1px solid rgba(56, 189, 248, 0.3)', paddingLeft: '4px' }}>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); approveTagMutation.mutate({ tagId: t.tag.id }); }}
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#10b981', padding: '0', fontSize: '12px', fontWeight: 'bold' }}
+                                        title="Approve"
+                                    >✓</button>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); rejectTagMutation.mutate({ tagId: t.tag.id }); }}
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '0', fontSize: '12px', fontWeight: 'bold' }}
+                                        title="Reject"
+                                    >×</button>
+                                </div>
+                            )}
+                        </span>
+                    ))}
+                    {/* Fallback to legacy tags if no relational tags */}
+                    {(!doc.versions || doc.versions.length === 0 || !doc.versions[0].tags || doc.versions[0].tags.length === 0) && tags.slice(0, 3).map((t: string) => (
                         <span key={t} className="tag-pill">{t}</span>
                     ))}
                 </div>
@@ -124,6 +207,14 @@ const DocumentRow: React.FC<{
                     {onChatOpen && (
                         <button onClick={() => onChatOpen({ id: doc.id, title: doc.title })} title="Chiedi all'AI" className="icon-btn">
                             <Bot size={16} />
+                        </button>
+                    )}
+                    <button onClick={() => setRelatedOpen(true)} title="Documenti Correlati" className="icon-btn">
+                        <Link2 size={16} />
+                    </button>
+                    {doc.conflicts && doc.conflicts.some((c: any) => c.status === 'pending') && (
+                        <button onClick={() => setConflictOpen(true)} title="Risolvi Conflitti" className="icon-btn" style={{ color: '#ef4444' }}>
+                            <AlertTriangle size={16} />
                         </button>
                     )}
                     {canEdit && (
@@ -149,6 +240,21 @@ const DocumentRow: React.FC<{
                     doc={doc}
                     onClose={() => setEditOpen(false)}
                     onSaveSuccess={() => { setEditOpen(false); onUpdate?.(); }}
+                />
+            )}
+            {relatedOpen && (
+                <RelatedDocumentsModal
+                    isOpen={relatedOpen}
+                    onClose={() => setRelatedOpen(false)}
+                    docId={doc.id}
+                    docTitle={doc.title}
+                />
+            )}
+            {conflictOpen && (
+                <ConflictResolutionModal
+                    isOpen={conflictOpen}
+                    onClose={() => setConflictOpen(false)}
+                    doc={doc}
                 />
             )}
             {shareOpen && <ShareModal docId={doc.id} fileName={doc.title} onClose={() => setShareOpen(false)} />}

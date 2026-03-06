@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, UUID, ForeignKey, DateTime, Boolean, JSON, func, Table, Index, Enum as SQLEnum, Text
+from sqlalchemy import Column, String, Integer, UUID, ForeignKey, DateTime, Boolean, JSON, func, Table, Index, Enum as SQLEnum, Text, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from pgvector.sqlalchemy import Vector
@@ -10,12 +10,23 @@ class DocumentStatus(str, enum.Enum):
     DRAFT = "draft"
     PUBLISHED = "published"
     ARCHIVED = "archived"
+    AI_READY = "ai_ready"
+    VALIDATED = "validated"
 
 class AIStatus(str, enum.Enum):
     PENDING = "pending"
     PROCESSING = "processing"
     READY = "ready"
     ERROR = "error"
+
+class TagStatus(str, enum.Enum):
+    SUGGESTED = "suggested"
+    VALIDATED = "validated"
+
+class ConflictStatus(str, enum.Enum):
+    PENDING = "pending"
+    RESOLVED = "resolved"
+    IGNORED = "ignored"
 
 
 class Document(Base):
@@ -27,12 +38,14 @@ class Document(Base):
     
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     department = Column(String, nullable=True, index=True)
+    category = Column(String, nullable=True, index=True) # Legal, HR, Finance, etc.
     status = Column(
         SQLEnum(DocumentStatus, values_callable=lambda obj: [e.value for e in obj]),
         default=DocumentStatus.DRAFT,
         index=True
     )
     
+    current_version = Column(Integer, default=1, nullable=False)
     current_version_id = Column(UUID(as_uuid=True), ForeignKey("doc_versions.id", use_alter=True), nullable=True, index=True)
     
     is_restricted = Column(Boolean, default=False, index=True)
@@ -40,9 +53,13 @@ class Document(Base):
     deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
+    confidence_score = Column(Float, default=0.0, index=True)
+    validation_method = Column(String, nullable=True) # MANUAL, AUTO_BULK
+    validated_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
     owner = relationship("User", back_populates="documents")
     versions = relationship("DocumentVersion", back_populates="document", cascade="all, delete-orphan", foreign_keys="[DocumentVersion.document_id]")
-    current_version = relationship("DocumentVersion", foreign_keys=[current_version_id], post_update=True)
+    current_version_rel = relationship("DocumentVersion", foreign_keys=[current_version_id], post_update=True)
     
     metadata_entries = relationship("DocumentMetadata", back_populates="document", cascade="all, delete-orphan")
     content = relationship("DocumentContent", uselist=False, back_populates="document", cascade="all, delete-orphan")
@@ -78,6 +95,8 @@ class DocumentVersion(Base):
         index=True
     )
     ai_summary = Column(Text, nullable=True)
+    ai_entities = Column(JSONB, nullable=True) # JSON estructured data {amount: 100, date: ...}
+    ai_reasoning = Column(Text, nullable=True) # Explanation of AI extraction logic
     vector_index_ref = Column(String, nullable=True)
 
     document = relationship("Document", back_populates="versions", foreign_keys=[document_id])
@@ -149,6 +168,42 @@ class DocumentVersionTag(Base):
     tag_id = Column(UUID(as_uuid=True), ForeignKey("tags.id"), primary_key=True)
     is_ai_generated = Column(Boolean, default=False)
     
+    status = Column(
+        SQLEnum(TagStatus, values_callable=lambda obj: [e.value for e in obj]),
+        default=TagStatus.VALIDATED, # Per default i tag manuali sono validati
+        index=True
+    )
+    page_number = Column(Integer, nullable=True) # Riferimento alla pagina per i tag AI
+    
     version = relationship("DocumentVersion", back_populates="tags")
     tag = relationship("Tag")
+
+    confidence = Column(Float, nullable=True) # AI Confidence score 0-1
+    ai_reasoning = Column(Text, nullable=True) # Why this tag was suggested
+
+class DocumentConflict(Base):
+    __tablename__ = "doc_conflicts"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False, index=True)
+    reference_doc_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True, index=True)
+    
+    field = Column(String, nullable=False) # e.g. "DataScadenza", "Importo"
+    old_value = Column(Text, nullable=True)
+    new_value = Column(Text, nullable=True)
+    severity = Column(String, nullable=False, default="Medium") # High, Medium, Low
+    explanation = Column(Text, nullable=True)
+    
+    status = Column(
+        SQLEnum(ConflictStatus, values_callable=lambda obj: [e.value for e in obj]),
+        default=ConflictStatus.PENDING,
+        index=True
+    )
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    resolved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    document = relationship("Document", foreign_keys=[document_id])
+    reference_document = relationship("Document", foreign_keys=[reference_doc_id])
 

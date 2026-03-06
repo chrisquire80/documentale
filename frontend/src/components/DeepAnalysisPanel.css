@@ -1,0 +1,231 @@
+.deep-analysis-container {
+    padding: 1.5rem;
+    color: var(--text-main);
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    animation: fadeIn 0.3s ease-out;
+}
+
+.deep-analysis-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--glass);
+    padding-bottom: 1rem;
+}
+
+.category-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(37, 99, 235, 0.15);
+    color: #60a5fa;
+    padding: 0.4rem 0.8rem;
+    border-radius: 2rem;
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border: 1px solid rgba(37, 99, 235, 0.3);
+}
+
+.ai-status-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: #10b981;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.analysis-section h3 {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 1rem;
+    margin-bottom: 1rem;
+    color: var(--accent);
+}
+
+.summary-text {
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.reasoning-box {
+    background: rgba(30, 41, 59, 0.5);
+    border: 1px solid var(--glass);
+    padding: 1.25rem;
+    border-radius: 0.8rem;
+    position: relative;
+}
+
+.reasoning-content {
+    font-size: 0.9rem;
+    color: var(--text-main);
+    line-height: 1.6;
+}
+
+.compliance-note {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.7rem;
+    color: #94a3b8;
+    margin-top: 1rem;
+    opacity: 0.7;
+}
+
+.entities-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1.25rem;
+}
+
+.entity-group label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.entity-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.entity-pill {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--glass);
+    padding: 0.25rem 0.6rem;
+    border-radius: 0.4rem;
+    font-size: 0.85rem;
+    color: var(--text-main);
+}
+
+.entity-pill.amount {
+    color: #fbbf24;
+    border-color: rgba(251, 191, 36, 0.3);
+    background: rgba(251, 191, 36, 0.1);
+}
+
+.clauses-list {
+    margin-top: 1.25rem;
+}
+
+.clauses-list label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    display: block;
+}
+
+.clauses-list ul {
+    margin: 0;
+    padding-left: 1.25rem;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.clauses-list li {
+    margin-bottom: 0.5rem;
+}
+
+/* Validation Tags List */
+.validation-tags-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.validation-tag {
+    display: flex;
+    align-items: center;
+    border-radius: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.85rem;
+    transition: all 0.2s ease;
+    gap: 0.5rem;
+}
+
+.validation-tag.suggested {
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px dashed rgba(56, 189, 248, 0.4);
+    color: #38bdf8;
+}
+
+.validation-tag.validated {
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #10b981;
+}
+
+.tag-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+}
+
+.tag-name {
+    font-weight: 600;
+}
+
+.page-citation {
+    background: rgba(15, 23, 42, 0.4);
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--accent);
+}
+
+.tag-actions {
+    display: flex;
+    gap: 4px;
+    border-left: 1px solid rgba(56, 189, 248, 0.2);
+    padding-left: 6px;
+    margin-left: 4px;
+}
+
+.approve-btn,
+.reject-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.approve-btn:hover {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+}
+
+.reject-btn:hover {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+.validated-check {
+    color: #10b981;
+}
+
+.deep-analysis-empty {
+    padding: 2rem;
+    text-align: center;
+    color: var(--text-muted);
+}

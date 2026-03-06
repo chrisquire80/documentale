@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from uuid import UUID
 from datetime import datetime
 from typing import List, Optional, Any, Dict
@@ -33,8 +33,7 @@ class UserResponse(UserBase):
     id: UUID
     is_active: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Document
 class DocumentBase(BaseModel):
@@ -54,15 +53,17 @@ class TagResponse(BaseModel):
     id: UUID
     name: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class DocumentVersionTagResponse(BaseModel):
     is_ai_generated: bool
+    status: str
+    page_number: Optional[int] = None
+    confidence: Optional[float] = None
+    ai_reasoning: Optional[str] = None
     tag: TagResponse
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class DocumentVersionResponse(BaseModel):
     id: UUID
@@ -70,29 +71,52 @@ class DocumentVersionResponse(BaseModel):
     created_at: datetime
     ai_status: str
     ai_summary: Optional[str] = None
+    ai_entities: Optional[Dict[str, Any]] = None
+    ai_reasoning: Optional[str] = None
     tags: List[DocumentVersionTagResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+class DocumentConflictResponse(BaseModel):
+    id: UUID
+    document_id: UUID
+    reference_doc_id: Optional[UUID] = None
+    field: str
+    old_value: Optional[str] = None
+    new_value: Optional[str] = None
+    severity: str
+    explanation: Optional[str] = None
+    status: str
+    created_at: datetime
+    resolved_at: Optional[datetime] = None
+    resolved_by: Optional[UUID] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 class DocumentResponse(DocumentBase):
     id: UUID
     file_type: Optional[str] = None
     department: Optional[str] = None
+    category: Optional[str] = None
     status: str
+    current_version: int = 1
     current_version_id: Optional[UUID] = None
     owner_id: UUID
     is_deleted: bool = False
     created_at: datetime
     deleted_at: Optional[datetime] = None
+    confidence_score: float = 0.0
+    validation_method: Optional[str] = None
+    validated_at: Optional[datetime] = None
     highlight_snippet: Optional[str] = None
     is_indexed: bool = False  # True se l'embedding AI è già stato generato
     relevance_score: Optional[float] = None
     
     versions: List[DocumentVersionResponse] = []
+    current_version_rel: Optional[DocumentVersionResponse] = Field(None, alias="current_version_rel")
+    conflicts: List[DocumentConflictResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 class BulkExportRequest(BaseModel):
     document_ids: List[UUID]
@@ -118,5 +142,4 @@ class DocumentShareResponse(BaseModel):
     shared_by_id: UUID
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

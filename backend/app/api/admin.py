@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 import csv
 import io
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, cast, String
+from sqlalchemy import select, func, cast, String, text
 from pydantic import BaseModel
 from uuid import UUID
 
@@ -397,10 +397,10 @@ async def get_top_queries(
 
     stmt = (
         select(Document.title, func.count(AuditLog.id).label("query_count"))
-        .join(Document, AuditLog.target_id == Document.id)
+        .outerjoin(AuditLog, AuditLog.target_id == Document.id)
         .where(
             AuditLog.action == "AI_CHAT",
-            AuditLog.timestamp >= func.now() - func.cast("30 days", type_=None)
+            AuditLog.timestamp >= func.now() - text("INTERVAL '30 days'")
         )
         .group_by(Document.title)
         .order_by(desc("query_count"))

@@ -13,7 +13,7 @@ interface TrashedDocument {
 }
 
 const fetchTrash = async (token: string, page: number = 0) => {
-    const res = await axios.get(`${import.meta.env.VITE_API_URL}/api/documents/trash?offset=${page * 20}`, {
+    const res = await axios.get(`${import.meta.env.VITE_API_URL}/documents/trash?offset=${page * 20}`, {
         headers: { Authorization: `Bearer ${token}` }
     });
     return res.data;
@@ -32,7 +32,7 @@ const TrashPage: React.FC = () => {
     });
 
     const restoreMutation = useMutation({
-        mutationFn: (docId: string) => axios.post(`${import.meta.env.VITE_API_URL}/api/documents/${docId}/restore`, {}, {
+        mutationFn: (docId: string) => axios.post(`${import.meta.env.VITE_API_URL}/documents/${docId}/restore`, {}, {
             headers: { Authorization: `Bearer ${token}` }
         }),
         onSuccess: () => {
@@ -42,7 +42,7 @@ const TrashPage: React.FC = () => {
     });
 
     const hardDeleteMutation = useMutation({
-        mutationFn: (docId: string) => axios.delete(`${import.meta.env.VITE_API_URL}/api/documents/${docId}/hard`, {
+        mutationFn: (docId: string) => axios.delete(`${import.meta.env.VITE_API_URL}/documents/${docId}/hard`, {
             headers: { Authorization: `Bearer ${token}` }
         }),
         onSuccess: () => {

@@ -16,30 +16,59 @@ else:
 
 async def extract_metadata_from_text(text: str) -> Dict[str, Any]:
     """
-    Usa Gemini per analizzare il testo di un documento e suggerire tag e un dipartimento.
+    Usa Gemini per eseguire una "Deep Analysis" del documento:
+    1. Classificazione categoria
+    2. Estrazione entità (Date, Importi, Firmatari)
+    3. Auto-tagging con citazione pagina
+    4. Reasoning (Glass-Box)
     """
     if not model or not text.strip():
-        logger.warning("Gemini API not configured or text is empty, skipping auto-tagging.")
-        return {"tags": [], "department": "Generale", "summary": ""}
+        logger.warning("Gemini API not configured or text is empty, skipping deep analysis.")
+        return {
+            "tags": [], 
+            "category": "Generale", 
+            "summary": "", 
+            "entities": {}, 
+            "reasoning": "Dati insufficienti per l'analisi."
+        }
 
-    # Limit text to roughly 15000 characters to save tokens and inference time
-    truncate_text = text[:15000]
+    # Limit text to roughly 20000 characters for flash model
+    truncate_text = text[:20000]
 
     prompt = f"""
-    Sei un assistente per un Document Management System aziendale.
-    Analizza il seguente testo estratto da un documento e restituisci ESATTAMENTE e SOLO un JSON valido con questa struttura (nessun preambolo, nessun blocco markdown come ```json):
+    Sei un esperto analista di documenti aziendali (stile Dual Basement).
+    Esegui una "Deep Analysis" del seguente testo e restituisci ESATTAMENTE e SOLO un JSON valido (nessun preambolo).
+    
+    OBIETTIVI:
+    1. Identificazione Classe: Determina categoria del documento (HR, Legal, Finance, etc).
+    2. Tagging Gerarchico: Estrai tag divisi per Dominio (contenuto), Governance (riservatezza), Azione (workflow).
+    3. NER: Estrai entità critiche (Date, Importi, Firmatari, Riferimenti Normativi come 'Art. X').
+    4. Confidenza: Assegna un punteggio da 0.0 a 1.0 per ogni tag ed entità.
+    5. Citazioni: Indica sempre la pagina di riferimento dove possibile.
+    6. Reasoning (Glass-Box): Per ogni tag, spiega brevemente perché è stato suggerito (es. "Trovato riferimento a X a pagina Y").
+
+    STRUTTURA JSON RICHIESTA:
     {{
-        "tags": ["keyword1", "keyword2", "keyword3"],
-        "department": "NomeDipartimento",
-        "summary": "Breve riassunto del documento"
+        "category": "HR|Legal|IT|Finance|Generale",
+        "tags": [
+            {{
+                "name": "tag1", 
+                "page": 1, 
+                "confidence": 0.95,
+                "reasoning": "Descrizione del perché è stato estratto"
+            }}
+        ],
+        "entities": {{
+            "dates": ["YYYY-MM-DD"],
+            "amounts": ["€..."],
+            "signatories": ["Nome Cognome"],
+            "references": ["Art. X"]
+        }},
+        "summary": "Massimo 3 righe in italiano",
+        "global_reasoning": "Spiegazione complessiva della logica di estrazione (AI Act compliance)"
     }}
 
-    Regole:
-    - Estrai al massimo 5 tags (max 15 caratteri l'uno, pertinenti).
-    - Suggerisci un dipartimento tra questi: "IT", "Risorse Umane", "Amministrazione", "Marketing", "Vendite", "Legale", "Direzione", "Generale". Se non sei sicuro, rispondi "Generale".
-    - Scrivi un "summary" conciso del testo, lungo al massimo 3 frasi in italiano, che spieghi di cosa tratta il documento.
-
-    Testo da analizzare:
+    TESTO DA ANALIZZARE:
     {truncate_text}
     """
 
@@ -49,10 +78,18 @@ async def extract_metadata_from_text(text: str) -> Dict[str, Any]:
         data = json.loads(content)
         
         return {
+            "category": data.get("category", "Generale"),
             "tags": data.get("tags", []),
-            "department": data.get("department", "Generale"),
-            "summary": data.get("summary", "")
+            "entities": data.get("entities", {}),
+            "summary": data.get("summary", ""),
+            "reasoning": data.get("global_reasoning", "Analisi eseguita basandosi sui pattern testuali rilevati.")
         }
     except Exception as e:
-        logger.error(f"Errore durante l'estrazione metadata con Gemini: {e}")
-        return {"tags": [], "department": "Generale", "summary": ""}
+        logger.error(f"Errore Deep Analysis Gemini: {e}")
+        return {
+            "tags": [], 
+            "category": "Generale", 
+            "summary": "", 
+            "entities": {}, 
+            "reasoning": f"Errore tecnico: {str(e)}"
+        }

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import {
     PieChart, Pie, Cell,
@@ -41,6 +41,7 @@ interface AuditLogEntry {
 const COLORS = ['#64DEC2', '#A5B4FC', '#FCD34D', '#F87171', '#D8B4FE', '#6EE7B7'];
 
 const AdminStatsTab: React.FC = () => {
+    const queryClient = useQueryClient();
     const token = localStorage.getItem('token');
     const [page, setPage] = useState(0);
     const [selectedAuditLog, setSelectedAuditLog] = useState<AuditLogEntry | null>(null);
@@ -49,11 +50,28 @@ const AdminStatsTab: React.FC = () => {
     const [flagDescription, setFlagDescription] = useState('');
     const [showSegnalazioniModal, setShowSegnalazioniModal] = useState(false);
 
+    // Mutation per creare una segnalazione di Governance (Wave 8)
+    const createSegnalazioneMutation = useMutation({
+        mutationFn: async (data: { document_title: string; note: string; priorita?: string; stato?: string }) => {
+            const res = await axios.post(`${BASE_URL}/admin/governance/segnalazioni`, {
+                ...data,
+                priorita: data.priorita || 'media',
+                stato: data.stato || 'segnalata'
+            }, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            return res.data;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['governance-segnalazioni'] });
+        }
+    });
+
     // KPI
     const { data: kpiData, isLoading: isLoadingKpi } = useQuery<DashboardKPI>({
         queryKey: ['admin-stats-kpi'],
         queryFn: async () => {
-            const res = await axios.get(`${BASE_URL}/api/admin/stats/dashboard`, {
+            const res = await axios.get(`${BASE_URL}/admin/stats/dashboard`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             return res.data;
@@ -64,7 +82,7 @@ const AdminStatsTab: React.FC = () => {
     const { data: deptData, isLoading: isLoadingDept } = useQuery<DepartmentStat[]>({
         queryKey: ['admin-stats-dept'],
         queryFn: async () => {
-            const res = await axios.get(`${BASE_URL}/api/admin/stats/departments`, {
+            const res = await axios.get(`${BASE_URL}/admin/stats/departments`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             return res.data;
@@ -75,7 +93,7 @@ const AdminStatsTab: React.FC = () => {
     const { data: queryData, isLoading: isLoadingQuery } = useQuery<QueryStat[]>({
         queryKey: ['admin-stats-queries'],
         queryFn: async () => {
-            const res = await axios.get(`${BASE_URL}/api/admin/stats/queries`, {
+            const res = await axios.get(`${BASE_URL}/admin/stats/queries`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             return res.data;
@@ -86,7 +104,7 @@ const AdminStatsTab: React.FC = () => {
     const { data: auditData, isLoading: isLoadingAudit } = useQuery<{ items: AuditLogEntry[], total: number }>({
         queryKey: ['admin-audit-logs', page],
         queryFn: async () => {
-            const res = await axios.get(`${BASE_URL}/api/admin/audit-logs?skip=${page * 10}&limit=10`, {
+            const res = await axios.get(`${BASE_URL}/admin/audit-logs?skip=${page * 10}&limit=10`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             return res.data;
@@ -330,14 +348,21 @@ const AdminStatsTab: React.FC = () => {
                                             <div className="flag-form-actions">
                                                 <button
                                                     className="governance-btn submit-flag-btn"
-                                                    disabled={!flagDescription.trim()}
+                                                    disabled={!flagDescription.trim() || createSegnalazioneMutation.isPending}
                                                     onClick={() => {
-                                                        setApprovalState(s => ({ ...s, [selectedAuditLog.id]: 'flagged' }));
-                                                        setFlagFormOpen(null);
-                                                        setFlagDescription('');
+                                                        createSegnalazioneMutation.mutate({
+                                                            document_title: selectedAuditLog.document_title,
+                                                            note: flagDescription
+                                                        }, {
+                                                            onSuccess: () => {
+                                                                setApprovalState(s => ({ ...s, [selectedAuditLog.id]: 'flagged' }));
+                                                                setFlagFormOpen(null);
+                                                                setFlagDescription('');
+                                                            }
+                                                        });
                                                     }}
                                                 >
-                                                    <AlertTriangle size={15} /> Invia Segnalazione
+                                                    <AlertTriangle size={15} /> {createSegnalazioneMutation.isPending ? 'Invio...' : 'Invia Segnalazione'}
                                                 </button>
                                                 <button
                                                     className="governance-btn cancel-flag-btn"

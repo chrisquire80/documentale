@@ -1,0 +1,100 @@
+﻿FTS: trigger e indice GIN installati su doc_content.
+Redis: connesso con successo.
+Watchdog: Started monitoring /app/auto_ingest
+INFO:     172.18.0.1:36274 - "OPTIONS /documents/search?limit=20&offset=0 HTTP/1.1" 200 OK
+INFO:     172.18.0.1:36274 - "GET /documents/search?limit=20&offset=0 HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:36278 - "GET /documents/search?limit=20&offset=0 HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:36288 - "OPTIONS /auth/me HTTP/1.1" 200 OK
+INFO:     172.18.0.1:36290 - "OPTIONS /auth/me HTTP/1.1" 200 OK
+INFO:     172.18.0.1:36288 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     172.18.0.1:36290 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     172.18.0.1:36290 - "GET /documents/search?limit=20&offset=0 HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:36288 - "GET /documents/search?limit=20&offset=0 HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38238 - "GET /documents/search?limit=20&offset=0 HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38248 - "GET /documents/search?limit=20&offset=0 HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "OPTIONS /documents/upload HTTP/1.1" 200 OK
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
+INFO:     172.18.0.1:38260 - "POST /documents/upload HTTP/1.1" 500 Internal Server Error
