@@ -69,6 +69,16 @@ class TestPasswordHashing:
         assert verify_password("mypassword", hashed) is False
         assert verify_password("MYPASSWORD", hashed) is False
 
+    def test_verify_password_malformed_hash(self):
+        """verify_password should return False for malformed hashes."""
+        assert verify_password("password", "not-a-hash") is False
+        assert verify_password("password", "$2b$12$invalidhash") is False
+        assert verify_password("password", "") is False
+
+    def test_verify_password_none_hash(self):
+        """verify_password should return False if the hash is None."""
+        assert verify_password("password", None) is False
+
 
 # ── Access Token Creation ──────────────────────────────────────────────────────
 
