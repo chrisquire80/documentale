@@ -10,7 +10,7 @@ Copre:
 - get_current_user dependency
 """
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 from uuid import uuid4
 
@@ -105,7 +105,7 @@ class TestAccessTokenCreation:
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
         assert "exp" in decoded
-        assert decoded["exp"] > datetime.utcnow().timestamp()
+        assert decoded["exp"] > datetime.now(timezone.utc).timestamp()
 
     def test_create_access_token_type_is_access(self):
         """Il token deve avere type='access'."""
@@ -118,14 +118,14 @@ class TestAccessTokenCreation:
     def test_create_access_token_default_expiration(self):
         """La scadenza di default deve essere ACCESS_TOKEN_EXPIRE_MINUTES."""
         subject = "user@example.com"
-        before = datetime.utcnow()
+        before = datetime.now(timezone.utc)
         token = create_access_token(subject=subject)
-        after = datetime.utcnow()
+        after = datetime.now(timezone.utc)
 
         decoded = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
-        exp_datetime = datetime.utcfromtimestamp(decoded["exp"])
+        exp_datetime = datetime.fromtimestamp(decoded["exp"], timezone.utc)
 
         expected_expire = before + timedelta(
             minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
@@ -137,14 +137,14 @@ class TestAccessTokenCreation:
         """Un custom expires_delta deve essere rispettato."""
         subject = "user@example.com"
         custom_delta = timedelta(hours=2)
-        before = datetime.utcnow()
+        before = datetime.now(timezone.utc)
         token = create_access_token(subject=subject, expires_delta=custom_delta)
-        after = datetime.utcnow()
+        after = datetime.now(timezone.utc)
 
         decoded = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
-        exp_datetime = datetime.utcfromtimestamp(decoded["exp"])
+        exp_datetime = datetime.fromtimestamp(decoded["exp"], timezone.utc)
 
         expected_expire = before + custom_delta
         # Tolleranza di 5 secondi
@@ -213,14 +213,14 @@ class TestRefreshTokenCreation:
     def test_create_refresh_token_custom_expiration(self):
         """Un custom expires_delta deve essere rispettato."""
         custom_delta = timedelta(days=7)
-        before = datetime.utcnow()
+        before = datetime.now(timezone.utc)
         token = create_refresh_token(subject="user@example.com", expires_delta=custom_delta)
-        after = datetime.utcnow()
+        after = datetime.now(timezone.utc)
 
         decoded = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
-        exp_datetime = datetime.utcfromtimestamp(decoded["exp"])
+        exp_datetime = datetime.fromtimestamp(decoded["exp"], timezone.utc)
 
         expected_expire = before + custom_delta
         assert abs((exp_datetime - expected_expire).total_seconds()) < 5
