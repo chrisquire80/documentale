@@ -95,9 +95,12 @@ const DashboardPage: React.FC = () => {
         }
     }, [lastMessage, queryClient]);
 
-    // Debounce
+    // Debounce search input and reset pagination only when the debounced query changes
     useEffect(() => {
-        const timer = setTimeout(() => setDebouncedQuery(inputValue), 500);
+        const timer = setTimeout(() => {
+            setCurrentPage(1);
+            setDebouncedQuery(inputValue);
+        }, 500);
         return () => clearTimeout(timer);
     }, [inputValue]);
 
@@ -172,7 +175,6 @@ const DashboardPage: React.FC = () => {
     }, [documents, filters]);
 
     const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        setCurrentPage(1);
         setInputValue(e.target.value);
     }, []);
 
