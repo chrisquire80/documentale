@@ -20,6 +20,7 @@ import { useWebSocket } from '../hooks/useWebSocket';
 
 const ITEMS_PER_PAGE = 20;
 const SKELETON_COUNT = 6;
+const EMPTY_DOCUMENTS: Document[] = [];
 
 interface Document {
     id: string;
@@ -100,12 +101,6 @@ const DashboardPage: React.FC = () => {
         return () => clearTimeout(timer);
     }, [inputValue]);
 
-    // Reset to page 1 whenever the search term or filters change
-    useEffect(() => {
-        // Use setTimeout to avoid synchronous setState warning in some lint rules
-        const t = setTimeout(() => setCurrentPage(1), 0);
-        return () => clearTimeout(t);
-    }, [debouncedQuery, filters, searchMode]);
 
     const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
@@ -130,10 +125,18 @@ const DashboardPage: React.FC = () => {
         },
     });
 
-    const documents = data?.items || [];
+    const documents = data?.items ?? EMPTY_DOCUMENTS;
+    const selectedDocsSet = React.useMemo(() => new Set(selectedDocs), [selectedDocs]);
 
     const total = data?.total ?? 0;
     const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
+
+    const selectedTitles = React.useMemo(() => {
+        if (selectedDocsSet.size === 0 || documents.length === 0) return [];
+        return documents
+            .filter((doc: Document) => selectedDocsSet.has(doc.id))
+            .map((doc: Document) => doc.title);
+    }, [documents, selectedDocsSet]);
 
     // Client-side AI status filtering
     const filteredDocuments = React.useMemo(() => {
@@ -169,7 +172,18 @@ const DashboardPage: React.FC = () => {
     }, [documents, filters]);
 
     const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        setCurrentPage(1);
         setInputValue(e.target.value);
+    }, []);
+
+    const handleFiltersChange = useCallback((nextFilters: FilterState) => {
+        setCurrentPage(1);
+        setFilters(nextFilters);
+    }, []);
+
+    const handleSearchModeToggle = useCallback(() => {
+        setCurrentPage(1);
+        setSearchMode(m => m === 'hybrid' ? 'semantic' : 'hybrid');
     }, []);
 
     const toggleDocSelection = useCallback((id: string) => {
@@ -270,7 +284,7 @@ const DashboardPage: React.FC = () => {
                         availableAuthors={availableAuthors}
                         availableDepartments={availableDepartments}
                         filters={filters}
-                        onChange={setFilters}
+                        onChange={handleFiltersChange}
                         onTagAssigned={() => queryClient.invalidateQueries({ queryKey: ['documents'] })}
                     />
 
@@ -290,7 +304,7 @@ const DashboardPage: React.FC = () => {
                             </div>
                             <button
                                 className={`search-mode-toggle${searchMode === 'semantic' ? ' active' : ''}`}
-                                onClick={() => setSearchMode(m => m === 'hybrid' ? 'semantic' : 'hybrid')}
+                                onClick={handleSearchModeToggle}
                                 title={searchMode === 'semantic' ? 'Modalità: Ricerca Semantica AI' : 'Modalità: Ricerca Ibrida (testo + AI)'}
                             >
                                 <Sparkles size={16} />
@@ -330,13 +344,13 @@ const DashboardPage: React.FC = () => {
                                                 key={doc.id}
                                                 doc={doc}
                                                 onUpdate={refetch}
-                                                isSelected={selectedDocs.includes(doc.id)}
+                                                isSelected={selectedDocsSet.has(doc.id)}
                                                 onToggleSelect={toggleDocSelection}
                                                 onChatOpen={setChatDoc}
                                                 onPreview={setFocusDoc}
                                             />
                                         ))}
-                                        {documents.length === 0 && (
+                                        {filteredDocuments.length === 0 && (
                                             <div style={{ textAlign: 'center', gridColumn: '1/-1', color: 'var(--text-muted)', marginTop: '4rem' }}>
                                                 Nessun documento trovato.
                                             </div>
@@ -349,13 +363,13 @@ const DashboardPage: React.FC = () => {
                                                 key={doc.id}
                                                 doc={doc}
                                                 onUpdate={refetch}
-                                                isSelected={selectedDocs.includes(doc.id)}
+                                                isSelected={selectedDocsSet.has(doc.id)}
                                                 onToggleSelect={toggleDocSelection}
                                                 onChatOpen={setChatDoc}
                                                 onPreview={setFocusDoc}
                                             />
                                         ))}
-                                        {documents.length === 0 && (
+                                        {filteredDocuments.length === 0 && (
                                             <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '4rem' }}>
                                                 Nessun documento trovato.
                                             </div>
@@ -381,7 +395,7 @@ const DashboardPage: React.FC = () => {
                 selectedIds={selectedDocs}
                 onClearSelection={() => setSelectedDocs([])}
                 onSuccess={refetch}
-                selectedTitles={documents?.filter((d: Document) => selectedDocs.includes(d.id)).map((d: Document) => d.title)}
+                selectedTitles={selectedTitles}
             />
 
             {isUploadOpen && (
