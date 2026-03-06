@@ -3,8 +3,8 @@ from typing import Optional
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Documentale DMS"
-    DATABASE_URL: str = "postgresql+asyncpg://user:pass@localhost/db"
-    SECRET_KEY: str = "test-secret-key-change-it-in-production"
+    DATABASE_URL: str
+    SECRET_KEY: str
     DEBUG: bool = False
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 240  # 4 hours
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 30  # 30 days
@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     GEMINI_ENABLED: bool = True
 
     STORAGE_PATH: str = "/app/storage/documents"
-    REDIS_URL: str = "redis://redis:6379/0"
+    REDIS_URL: str
 
     AUTO_USER_EMAIL: str = "admin@example.com"
     WATCH_DIR: str = "/app/auto_ingest"
