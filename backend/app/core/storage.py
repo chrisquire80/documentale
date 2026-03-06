@@ -1,13 +1,14 @@
 import os
 import uuid
+import inspect
 from abc import ABC, abstractmethod
-from typing import BinaryIO
+from typing import BinaryIO, Any
 import aiofiles
 from .config import settings
 
 class StorageLayer(ABC):
     @abstractmethod
-    async def save_file(self, file: BinaryIO, filename: str) -> str:
+    async def save_file(self, file: Any, filename: str) -> str:
         """Saves file and returns the relative path."""
         pass
 
@@ -27,7 +28,7 @@ class LocalStorage(StorageLayer):
         if not os.path.exists(self.base_path):
             os.makedirs(self.base_path, exist_ok=True)
 
-    async def save_file(self, file: BinaryIO, filename: str) -> str:
+    async def save_file(self, file: Any, filename: str) -> str:
         # Prevent path traversal attacks
         safe_filename = os.path.basename(filename)
 
@@ -42,6 +43,8 @@ class LocalStorage(StorageLayer):
             chunk_size = 1024 * 1024  # 1MB chunks
             while True:
                 chunk = file.read(chunk_size)
+                if inspect.iscoroutine(chunk):
+                    chunk = await chunk
                 if not chunk:
                     break
                 await f.write(chunk)

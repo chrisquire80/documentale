@@ -57,11 +57,11 @@ class AutoIngestHandler(FileSystemEventHandler):
         # Wait a bit to ensure the file is completely written (copied) by the host OS
         await asyncio.sleep(2)
         
-        if not os.path.exists(file_path):
+        if not await asyncio.to_thread(os.path.exists, file_path):
             return
 
         marker_file = f"{file_path}.processed"
-        if os.path.exists(marker_file):
+        if await asyncio.to_thread(os.path.exists, marker_file):
             print(f"Watchdog: {file_path} already processed. Skipping.")
             return
 
@@ -76,8 +76,8 @@ class AutoIngestHandler(FileSystemEventHandler):
                     return
 
                 # Read file into memory to pass to storage (simulating UploadFile behavior)
-                file_size = os.path.getsize(file_path)
-                with open(file_path, 'rb') as f:
+                file_size = await asyncio.to_thread(os.path.getsize, file_path)
+                async with aiofiles.open(file_path, 'rb') as f:
                     # 1. Save file to storage
                     file_rel_path = await self.storage.save_file(f, filename)
                 
@@ -157,8 +157,8 @@ class AutoIngestHandler(FileSystemEventHandler):
                 
                 # Create a marker file so it doesn't get processed again
                 marker_file = f"{file_path}.processed"
-                with open(marker_file, 'w') as mf:
-                    mf.write(f"Ingested as Document ID: {doc.id}")
+                async with aiofiles.open(marker_file, 'w') as mf:
+                    await mf.write(f"Ingested as Document ID: {doc.id}")
                 
             except Exception as e:
                 await db.rollback()
